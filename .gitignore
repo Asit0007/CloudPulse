@@ -1,0 +1,49 @@
+# Bash scripts
+setup_cloudpulse_structure.sh
+install_dependencies.sh
+
+# Go dependencies and build artifacts
+/backend/go.sum
+/backend/*.exe
+/backend/main
+/backend/tmp/
+/vendor/
+
+# Docker artifacts
+*.dockerignore
+docker-compose.yml
+*.tar.gz
+
+# Terraform files
+/terraform/.terraform/
+/terraform/terraform.tfstate
+/terraform/terraform.tfstate.backup
+/terraform/.terraform.lock.hcl
+/terraform/*.tfvars
+
+# Node.js (optional, for frontend tooling)
+node_modules/
+npm-debug.log
+package-lock.json
+
+# AWS credentials and sensitive files
+.env
+*.pem
+*.key
+awscliv2.zip
+AWSCLIV2.pkg
+.aws/
+
+# System and editor files
+.DS_Store
+*.swp
+*.swo
+.vscode/
+.idea/
+*.log
+
+# Temporary files and caches
+*.tmp
+*.cache
+*.bak
+*.backup

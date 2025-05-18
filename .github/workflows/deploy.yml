@@ -1,0 +1,7 @@
+# deploy.yml: GitHub Actions workflow for CloudPulse deployment
+# Add implementation here
+name: Deploy to AWS
+on:
+  push:
+    branches:
+      - main

@@ -1,12 +1,14 @@
 #!/bin/bash
 
-set -e  # Exit on error
+set -e  # Exit immediately if a command exits with a non-zero status
 
+# Ensure script is run from the root of the CloudPulse repo
 if [ ! -d ".git" ]; then
   echo "❌ Please run this script from the root of the CloudPulse repo."
   exit 1
 fi
 
+# Detect operating system and architecture
 OS=$(uname -s)
 ARCH=$(uname -m)
 if [ "$OS" != "Darwin" ] || [ "$ARCH" != "arm64" ]; then
@@ -15,10 +17,12 @@ if [ "$OS" != "Darwin" ] || [ "$ARCH" != "arm64" ]; then
 fi
 echo "✅ Detected macOS (M1 ARM64)"
 
+# Function to check if a command exists
 command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
 
+# Function to check if a command's version meets minimum required version
 check_version() {
   local cmd=$1
   local min_version=$2
@@ -26,6 +30,7 @@ check_version() {
   local version_flags=("$@")
   local version=""
 
+  # Try different flags to get version
   for flag in "${version_flags[@]}"; do
     if output=$($cmd $flag 2>/dev/null); then
       version=$(echo "$output" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n 1)
@@ -38,6 +43,7 @@ check_version() {
     return 1
   fi
 
+  # Compare version using sort -V
   if [ "$(printf '%s\n' "$min_version" "$version" | sort -V | head -n1)" != "$min_version" ]; then
     echo "❌ $cmd version $version too old (required: $min_version)"
     return 1
@@ -46,7 +52,7 @@ check_version() {
   echo "✅ $cmd version $version OK"
 }
 
-# Install Homebrew
+# Ensure Homebrew is installed
 if ! command_exists brew; then
   echo "🔧 Installing Homebrew..."
   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -57,7 +63,7 @@ else
   brew update
 fi
 
-# Define dependencies: name|min_version|version_flags(comma)|install_command
+# Define dependencies in format: name|min_version|version_flags|install_command
 DEPENDENCIES=(
   "go|1.21|--version,version|brew install go@1.21"
   "docker|20.10|--version,version|brew install --cask docker"
@@ -66,7 +72,7 @@ DEPENDENCIES=(
   "node|18.0|--version,-v|brew install node@18 && echo 'export PATH=\"/opt/homebrew/opt/node@18/bin:\$PATH\"' >> ~/.zshrc && export PATH=\"/opt/homebrew/opt/node@18/bin:\$PATH\""
 )
 
-# Loop through and handle each dependency
+# Loop over each dependency and ensure it is installed and version compliant
 for entry in "${DEPENDENCIES[@]}"; do
   IFS='|' read -r name min_version flags install_cmd <<< "$entry"
   IFS=',' read -ra version_flags <<< "$flags"
@@ -84,7 +90,7 @@ for entry in "${DEPENDENCIES[@]}"; do
   echo ""
 done
 
-# Setup Go modules
+# Setup Go modules for backend
 echo "📦 Setting up Go modules..."
 mkdir -p backend
 cd backend
@@ -102,7 +108,7 @@ go get golang.org/x/oauth2
 go mod tidy
 cd ..
 
-# Final instructions
+# Final instructions for user
 echo -e "\n🎉 All dependencies installed successfully!"
 echo "👉 Next steps:"
 echo "1. Run: aws configure"

@@ -18,13 +18,13 @@ To develop and deploy CloudPulse, ensure you have the following installed:
 - **Docker**: For containerizing the application.
 - **Terraform (1.5.0+)**: For infrastructure automation.
 - **AWS CLI**: For interacting with AWS services.
-- **Node.js (18+)**: Optional, for frontend tooling.
+- **Node.js (18+)**: Optional, for frontend tooling (e.g., local development or linting).
 - **Git**: For version control.
-- **GitHub Personal Access Token**: With \`repo\` scope for accessing contributor data.
+- **GitHub Personal Access Token**: With `repo` scope for accessing contributor data. Store securely as an environment variable or GitHub Secret.
 - **AWS Account**: Within the Free Tier, with IAM credentials configured.
 
 ## Project Structure
-\`\`\`
+```
 CloudPulse/
 ├── backend/
 │   ├── main.go          # Go backend server
@@ -42,77 +42,79 @@ CloudPulse/
 └── .github/
     └── workflows/
         └── deploy.yml      # GitHub Actions workflow for CI/CD
-\`\`\`
+```
 
 ## Setup Instructions
 1. **Clone the Repository**:
-   \`\`\`bash
-   git clone https://github.com/your-username/CloudPulse.git
+   ```bash
+   git clone https://github.com/<your-username>/CloudPulse.git
    cd CloudPulse
-   \`\`\`
+   ```
 
 2. **Install Dependencies**:
    Run the provided script to install Go, Docker, Terraform, AWS CLI, and Node.js:
-   \`\`\`bash
+   ```bash
    chmod +x install_dependencies.sh
    ./install_dependencies.sh
-   \`\`\`
+   ```
 
 3. **Configure AWS CLI**:
-   \`\`\`bash
+   ```bash
    aws configure
-   \`\`\`
-   Provide your AWS Access Key ID, Secret Access Key, region (\`us-east-1\`), and output format (\`json\`).
+   ```
+   Provide your AWS Access Key ID, Secret Access Key, region (`us-east-1`), and output format (`json`).
 
 4. **Set GitHub Token**:
-   \`\`\`bash
-   export GITHUB_TOKEN=your-github-token
-   \`\`\`
-   Replace \`your-github-token\` with your GitHub Personal Access Token.
+   ```bash
+   export GITHUB_TOKEN=<your-github-token>
+   ```
+   Replace `<your-github-token>` with your GitHub Personal Access Token. For CI/CD, store it as a GitHub Secret.
 
 5. **Create Project Structure** (if not already done):
-   \`\`\`bash
+   ```bash
    chmod +x setup_cloudpulse_structure.sh
    ./setup_cloudpulse_structure.sh
-   \`\`\`
+   ```
 
 6. **Add Implementation Code**:
-   - Populate the files in \`backend/\`, \`frontend/\`, and \`terraform/\` with the implementation code (refer to project documentation or artifacts for details).
-   - Update \`backend/main.go\` to use the correct frontend path (\`http.FileServer(http.Dir("frontend"))\`).
+   - Populate the files in `backend/`, `frontend/`, and `terraform/` with the implementation code (refer to project documentation or artifacts for details).
+   - Update `backend/main.go` to serve frontend files from the correct path: `http.FileServer(http.Dir("frontend"))`. This is required because the `Dockerfile` copies the `frontend` directory to `/app/frontend` in the container.
 
 ## Local Development
 1. **Build and Run the Docker Container**:
-   \`\`\`bash
+   ```bash
    cd backend
    docker build -t cloudpulse .
-   docker run -p 8080:8080 -e GITHUB_TOKEN=your-github-token cloudpulse
-   \`\`\`
-2. Open \`http://localhost:8080\` in a browser to view the dashboard.
+   docker run -p 8080:8080 -e GITHUB_TOKEN=<your-github-token> cloudpulse
+   ```
+   Ensure Docker is running (e.g., start Docker Desktop on macOS or verify with `docker ps`).
+2. Open `http://localhost:8080` in a browser to view the dashboard.
 
 ## Deployment to AWS
 1. **Set Up AWS Budgets**:
-   - In the AWS Console, create a \$0 cost budget with an alert at \$0.01 to monitor Free Tier usage.
+   - In the AWS Console, create a $0 cost budget with an alert at $0.01 to monitor Free Tier usage.
 2. **Push Docker Image to ECR**:
-   \`\`\`bash
-   aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin <your-account-id>.dkr.ecr.us-east-1.amazonaws.com
-   docker tag cloudpulse:latest <your-account-id>.dkr.ecr.us-east-1.amazonaws.com/cloudpulse:latest
-   docker push <your-account-id>.dkr.ecr.us-east-1.amazonaws.com/cloudpulse:latest
-   \`\`\`
+   ```bash
+   aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin <your-aws-account-id>.dkr.ecr.us-east-1.amazonaws.com
+   docker tag cloudpulse:latest <your-aws-account-id>.dkr.ecr.us-east-1.amazonaws.com/cloudpulse:latest
+   docker push <your-aws-account-id>.dkr.ecr.us-east-1.amazonaws.com/cloudpulse:latest
+   ```
+   Replace `<your-aws-account-id>` with your 12-digit AWS account ID.
 3. **Deploy with Terraform**:
-   \`\`\`bash
+   ```bash
    cd terraform
    terraform init
-   terraform apply -var="github_token=your-github-token"
-   \`\`\`
+   terraform apply -var="github_token=<your-github-token>"
+   ```
 4. **Access the Dashboard**:
    - Retrieve the ECS service public IP from the AWS Console (ECS > Clusters > cloudpulse-cluster > Services > cloudpulse-service > Tasks).
    - Alternatively, configure a domain with Route 53.
 5. **Offline Page**:
-   - Upload \`frontend/offline.html\` to an S3 bucket and configure it as a static website:
-     \`\`\`bash
+   - Upload `frontend/offline.html` to an S3 bucket and configure it as a static website:
+     ```bash
      aws s3 cp frontend/offline.html s3://cloudpulse-bucket/
      aws s3 website s3://cloudpulse-bucket/ --index-document offline.html
-     \`\`\`
+     ```
 
 ## Usage
 *To be added after implementation code is complete.*
@@ -122,9 +124,9 @@ CloudPulse/
 ## Contributing
 Contributions are welcome! Please:
 1. Fork the repository.
-2. Create a feature branch (\`git checkout -b feature/your-feature\`).
-3. Commit changes (\`git commit -m "Add your feature"\`).
-4. Push to the branch (\`git push origin feature/your-feature\`).
+2. Create a feature branch (`git checkout -b feature/your-feature`).
+3. Commit changes (`git commit -m "Add your feature"`).
+4. Push to the branch (`git push origin feature/your-feature`).
 5. Open a pull request.
 
 ## License

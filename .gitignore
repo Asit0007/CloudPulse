@@ -2,6 +2,7 @@
 setup_cloudpulse_structure.sh
 install_dependencies.sh
 create_gitignore.sh
+update_readme.sh
 
 # Go dependencies and build artifacts
 /backend/go.sum

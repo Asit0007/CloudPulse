@@ -117,3 +117,8 @@ echo "3. Start Docker manually: open /Applications/Docker.app"
 echo "4. Add code to backend/, frontend/, terraform/"
 echo "5. Build: cd backend && docker build -t cloudpulse ."
 echo "6. Run: docker run -p 8080:8080 -e GITHUB_TOKEN=<token> cloudpulse"
+
+# Add below dependencies later
+# Add brew tap hashicorp/tap
+# brew install hashicorp/tap/vault
+

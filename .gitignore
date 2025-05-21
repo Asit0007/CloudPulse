@@ -1,6 +1,7 @@
 # Bash scripts
 create_gitignore.sh
 update_readme.sh
+SetUpVaultSecrets.sh
 
 # Go dependencies and build artifacts
 /backend/go.sum

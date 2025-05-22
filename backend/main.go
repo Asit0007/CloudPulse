@@ -1,4 +1,3 @@
-// main.go: Go backend for CloudPulse dashboard
 package main
 
 import (
@@ -15,57 +14,187 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/costexplorer"
 	"github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
 	"github.com/google/go-github/v53/github"
+	"github.com/hashicorp/vault/api"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/oauth2"
 )
 
-func main() {
-	// Validate GITHUB_TOKEN
-	githubToken := os.Getenv("GITHUB_TOKEN")
-	if githubToken == "" {
-		log.Fatal("Error: GITHUB_TOKEN environment variable is required")
+// Config structure to hold all environment configuration
+type Config struct {
+	Stage              string
+	AWSRegion          string
+	LogLevel           string
+	Port               string
+	VaultAddr          string
+	VaultToken         string
+	AWSAccessKeyID     string
+	AWSSecretAccessKey string
+}
+
+// Prometheus metrics
+var (
+	requestCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "cloudpulse_requests_total",
+			Help: "Total number of requests handled",
+		},
+		[]string{"endpoint", "stage"},
+	)
+
+	requestLatency = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "cloudpulse_request_duration_seconds",
+			Help:    "Request latency in seconds",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"endpoint", "stage"},
+	)
+)
+
+// Register Prometheus metrics
+func init() {
+	prometheus.MustRegister(requestCounter)
+	prometheus.MustRegister(requestLatency)
+}
+
+// Load environment configuration with validation
+func loadConfig() Config {
+	cfg := Config{
+		Stage:      getEnv("STAGE", "testing"),
+		AWSRegion:  getEnv("AWS_REGION", "us-east-1"),
+		LogLevel:   getEnv("LOG_LEVEL", "info"),
+		Port:       getEnv("PORT", "8080"),
+		VaultAddr:  getEnv("VAULT_ADDR", "http://localhost:8200"),
+		VaultToken: getEnv("VAULT_TOKEN", "root"),
 	}
 
-	// GitHub client setup
+	// Validate stage value
+	allowedStages := []string{"testing", "staging", "production"}
+	isValidStage := false
+	for _, stage := range allowedStages {
+		if cfg.Stage == stage {
+			isValidStage = true
+			break
+		}
+	}
+	if !isValidStage {
+		log.Fatalf("Invalid STAGE: %s. Must be one of: %v", cfg.Stage, allowedStages)
+	}
+
+	// Ensure Vault credentials are provided
+	if cfg.VaultAddr == "" || cfg.VaultToken == "" {
+		log.Fatal("VAULT_ADDR and VAULT_TOKEN are required")
+	}
+
+	return cfg
+}
+
+// Retrieve environment variable with default fallback
+func getEnv(key, defaultValue string) string {
+	if value, exists := os.LookupEnv(key); exists {
+		return value
+	}
+	return defaultValue
+}
+
+// Fetch secret from Vault for the given path
+func getSecretFromVault(vaultAddr, vaultToken, path string) (string, error) {
+	config := &api.Config{Address: vaultAddr}
+	client, err := api.NewClient(config)
+	if err != nil {
+		return "", fmt.Errorf("failed to create Vault client: %v", err)
+	}
+
+	client.SetToken(vaultToken)
+	secret, err := client.Logical().Read(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to read secret from Vault at %s: %v", path, err)
+	}
+
+	if secret == nil || secret.Data == nil {
+		return "", fmt.Errorf("no secret found at path %s", path)
+	}
+
+	value, ok := secret.Data["value"].(string)
+	if !ok {
+		return "", fmt.Errorf("secret at path %s does not contain a 'value' field", path)
+	}
+
+	return value, nil
+}
+
+func main() {
+	cfg := loadConfig()
+	log.Printf("Starting CloudPulse in %s stage", cfg.Stage)
+
+	// Retrieve secrets from Vault
+	secretPathPrefix := fmt.Sprintf("secret/cloudpulse/%s", cfg.Stage)
+
+	githubToken, err := getSecretFromVault(cfg.VaultAddr, cfg.VaultToken, secretPathPrefix+"/GITHUB_TOKEN")
+	if err != nil {
+		log.Fatalf("Failed to fetch GITHUB_TOKEN: %v", err)
+	}
+
+	cfg.AWSAccessKeyID, err = getSecretFromVault(cfg.VaultAddr, cfg.VaultToken, secretPathPrefix+"/AWS_ACCESS_KEY_ID")
+	if err != nil {
+		log.Fatalf("Failed to fetch AWS_ACCESS_KEY_ID: %v", err)
+	}
+
+	cfg.AWSSecretAccessKey, err = getSecretFromVault(cfg.VaultAddr, cfg.VaultToken, secretPathPrefix+"/AWS_SECRET_ACCESS_KEY")
+	if err != nil {
+		log.Fatalf("Failed to fetch AWS_SECRET_ACCESS_KEY: %v", err)
+	}
+
+	// Initialize GitHub client with token authentication
 	ctx := context.Background()
-	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: githubToken},
-	)
+	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: githubToken})
 	tc := oauth2.NewClient(ctx, ts)
 	githubClient := github.NewClient(tc)
 
-	// AWS client setup
-	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion("us-east-1"))
+	// Load AWS SDK config using credentials from Vault
+	awsCfg, err := config.LoadDefaultConfig(ctx,
+		config.WithRegion(cfg.AWSRegion),
+		config.WithCredentialsProvider(aws.CredentialsProviderFunc(func(ctx context.Context) (aws.Credentials, error) {
+			return aws.Credentials{
+				AccessKeyID:     cfg.AWSAccessKeyID,
+				SecretAccessKey: cfg.AWSSecretAccessKey,
+			}, nil
+		})),
+	)
 	if err != nil {
-		log.Fatalf("Error: Unable to load AWS SDK config: %v", err)
+		log.Fatalf("Unable to load AWS SDK config: %v", err)
 	}
-	awsClient := costexplorer.NewFromConfig(cfg)
 
-	// Check if frontend directory exists
+	awsClient := costexplorer.NewFromConfig(awsCfg)
+
+	// Create default frontend if not exists
 	if _, err := os.Stat("frontend"); os.IsNotExist(err) {
-		log.Println("Warning: 'frontend' directory not found. Creating a default index.html...")
-		if err := os.MkdirAll("frontend", 0755); err != nil {
-			log.Fatalf("Error: Failed to create frontend directory: %v", err)
-		}
-		if err := os.WriteFile("frontend/index.html", []byte("<h1>Welcome to CloudPulse</h1><p>Go to /api/costs for AWS cost data or /api/github for GitHub data.</p>"), 0644); err != nil {
-			log.Fatalf("Error: Failed to create default index.html: %v", err)
-		}
+		log.Println("Creating default frontend...")
+		os.MkdirAll("frontend", 0755)
+		os.WriteFile("frontend/index.html", []byte("<h1>Welcome to CloudPulse</h1><p>Go to /api/costs or /api/github.</p>"), 0644)
 	}
 
-	// AWS Cost Explorer handler
+	// Expose Prometheus metrics endpoint
+	http.Handle("/metrics", promhttp.Handler())
+
+	// Handler for AWS cost explorer API
 	http.HandleFunc("/api/costs", func(w http.ResponseWriter, r *http.Request) {
-		// Fetch cost data for the last 30 days
+		startTime := time.Now()
+		requestCounter.WithLabelValues("/api/costs", cfg.Stage).Inc()
+		defer func() {
+			duration := time.Since(startTime).Seconds()
+			requestLatency.WithLabelValues("/api/costs", cfg.Stage).Observe(duration)
+		}()
+
+		// Define 30-day time range for cost retrieval
 		end := time.Now()
 		start := end.AddDate(0, 0, -30)
 
-		// Format dates as strings and convert to *string
-		startStr := start.Format("2006-01-02")
-		endStr := end.Format("2006-01-02")
-		log.Printf("Fetching AWS costs from %s to %s", startStr, endStr)
-
 		input := &costexplorer.GetCostAndUsageInput{
 			TimePeriod: &types.DateInterval{
-				Start: aws.String(startStr),
-				End:   aws.String(endStr),
+				Start: aws.String(start.Format("2006-01-02")),
+				End:   aws.String(end.Format("2006-01-02")),
 			},
 			Granularity: types.GranularityMonthly,
 			Metrics:     []string{"UnblendedCost"},
@@ -79,18 +208,23 @@ func main() {
 
 		result, err := awsClient.GetCostAndUsage(ctx, input)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Error fetching AWS cost data: %v", err), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("Error fetching AWS costs: %v", err), http.StatusInternalServerError)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(result); err != nil {
-			http.Error(w, fmt.Sprintf("Error encoding response: %v", err), http.StatusInternalServerError)
-		}
+		json.NewEncoder(w).Encode(result)
 	})
 
-	// GitHub API handler
+	// Handler for GitHub user data
 	http.HandleFunc("/api/github", func(w http.ResponseWriter, r *http.Request) {
+		startTime := time.Now()
+		requestCounter.WithLabelValues("/api/github", cfg.Stage).Inc()
+		defer func() {
+			duration := time.Since(startTime).Seconds()
+			requestLatency.WithLabelValues("/api/github", cfg.Stage).Observe(duration)
+		}()
+
 		user, _, err := githubClient.Users.Get(ctx, "")
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Error fetching GitHub user: %v", err), http.StatusInternalServerError)
@@ -101,19 +235,15 @@ func main() {
 			"login": user.GetLogin(),
 			"name":  user.GetName(),
 		}
+
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(response); err != nil {
-			http.Error(w, fmt.Sprintf("Error encoding response: %v", err), http.StatusInternalServerError)
-		}
+		json.NewEncoder(w).Encode(response)
 	})
 
-	// Serve frontend
+	// Serve static frontend files
 	http.Handle("/", http.FileServer(http.Dir("frontend")))
 
-	// Start server
-	port := ":8080"
-	log.Printf("Server starting on %s", port)
-	if err := http.ListenAndServe(port, nil); err != nil {
-		log.Fatalf("Error: Server failed to start: %v. Is port %s in use?", err, port)
-	}
+	// Start HTTP server
+	log.Printf("Server starting on :%s", cfg.Port)
+	http.ListenAndServe(":"+cfg.Port, nil)
 }

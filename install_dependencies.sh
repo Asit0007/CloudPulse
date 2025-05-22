@@ -108,6 +108,14 @@ go get golang.org/x/oauth2
 go mod tidy
 cd ..
 
+# Setup Prometheus modules for monitoring
+echo "📥 Installing prometheus packages..."
+brew install prometheus
+
+# Setup Grafana modules for monitoring
+echo "📥 Installing grafana packages..."
+brew install grafana
+
 # Final instructions for user
 echo -e "\n🎉 All dependencies installed successfully!"
 echo "👉 Next steps:"

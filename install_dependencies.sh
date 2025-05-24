@@ -105,6 +105,9 @@ go get github.com/aws/aws-sdk-go-v2/config
 go get github.com/aws/aws-sdk-go-v2/service/costexplorer
 go get github.com/google/go-github/v53
 go get golang.org/x/oauth2
+go get github.com/hashicorp/vault/api
+go get github.com/prometheus/client_golang/prometheus
+go get github.com/prometheus/client_golang/prometheus/promhttp
 go mod tidy
 cd ..
 

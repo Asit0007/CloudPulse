@@ -1,8 +1,17 @@
 # Configure the AWS provider with a specific version for consistency
-provider "aws" {
-  region  = var.aws_region
-  version = "~> 4.0"  # Adding version constraint ensures consistent provider behavior
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
+    }
+  }
 }
+
+provider "aws" {
+  region = "us-west-2"
+}
+
 
 # Create an ECR repository for the CloudPulse application
 resource "aws_ecr_repository" "cloudpulse" {
@@ -62,7 +71,7 @@ resource "aws_route_table" "public" {
 resource "aws_route_table_association" "public" {
   count          = terraform.workspace == "production" ? 1 : 0
   subnet_id      = aws_subnet.public[0].id
-  route_table_id = aws_route_table.public[0].id гиг
+  route_table_id = aws_route_table.public[0].id
 
 # Create a security group for the EC2 instance
 # NOTE: For production, consider restricting ingress to specific IP ranges instead of 0.0.0.0/0 for enhanced security
@@ -190,9 +199,10 @@ resource "aws_instance" "cloudpulse_instance" {
 
               # Set up Vault secrets using the root token
               docker-compose exec -T -e VAULT_TOKEN=$VAULT_TOKEN vault vault secrets enable -path=secret kv
-              docker-compose exec -T -e VAULT_TOKEN=$VAULT_TOKEN vault vault kv put secret/cloudpulse/production/GITHUB_TOKEN value=${var.github_token}
-              docker-compose exec -T -e VAULT_TOKEN=$VAULT_TOKEN vault vault kv put secret/cloudpulse/production/AWS_ACCESS_KEY_ID value=${var.aws_access_key_id}
-              docker-compose exec -T -e VAULT_TOKEN=$VAULT_TOKEN vault vault kv put secret/cloudpulse/production/AWS_SECRET_ACCESS_KEY value=${var.aws_secret_access_key}
+              echo "After Vault is running, add the secrets using the below commands:"
+              echo  "docker-compose exec -T -e VAULT_TOKEN=$VAULT_TOKEN vault vault kv put secret/cloudpulse/production/GITHUB_TOKEN value=${var.github_token}"
+              echo "docker-compose exec -T -e VAULT_TOKEN=$VAULT_TOKEN vault vault kv put secret/cloudpulse/production/AWS_ACCESS_KEY_ID value=${var.aws_access_key_id}"
+              echo "docker-compose exec -T -e VAULT_TOKEN=$VAULT_TOKEN vault vault kv put secret/cloudpulse/production/AWS_SECRET_ACCESS_KEY value=${var.aws_secret_access_key}"
               EOF
 
   tags = {

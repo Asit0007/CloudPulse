@@ -72,6 +72,7 @@ resource "aws_route_table_association" "public" {
   count          = terraform.workspace == "production" ? 1 : 0
   subnet_id      = aws_subnet.public[0].id
   route_table_id = aws_route_table.public[0].id
+}
 
 # Create a security group for the EC2 instance
 # NOTE: For production, consider restricting ingress to specific IP ranges instead of 0.0.0.0/0 for enhanced security

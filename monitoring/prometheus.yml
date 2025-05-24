@@ -1,0 +1,19 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'cloudpulse-testing'
+    static_configs:
+      - targets: ['host.docker.internal:8080']
+        labels:
+          stage: 'testing'
+  - job_name: 'cloudpulse-staging'
+    static_configs:
+      - targets: ['host.docker.internal:8081']
+        labels:
+          stage: 'staging'
+  - job_name: 'cloudpulse-production'
+    static_configs:
+      - targets: ['<ec2-public-ip>:8080']
+        labels:
+          stage: 'production'

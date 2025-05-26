@@ -2,10 +2,27 @@
 <!-- Add implementation here -->
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CloudPulse Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
+
 <body>
+    <div class="container">
+        <h1>CloudPulse Dashboard</h1>
+        <div id="usageChartContainer">
+            <canvas id="usageChart"></canvas>
+        </div>
+        <div id="contributors">
+            <h2>GitHub Contributors</h2>
+            <ul id="contributorList"></ul>
+        </div>
+    </div>
+    <script src="script.js"></script>
 </body>
+
 </html>

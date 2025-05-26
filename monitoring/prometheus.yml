@@ -14,6 +14,6 @@ scrape_configs:
           stage: 'staging'
   - job_name: 'cloudpulse-production'
     static_configs:
-      - targets: ['35.91.120.212:8080']
+      - targets: ['18.236.131.20:8080']
         labels:
           stage: 'production'

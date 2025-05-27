@@ -3,13 +3,15 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt" // Required for io.ReadAll
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws" // <-- ADDED for SDK helpers (aws.String, aws.Int32)
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
@@ -31,7 +33,6 @@ var (
 // --- Vault Functions ---
 
 // initVault initializes the Vault client.
-// VAULT_ADDR and VAULT_TOKEN must be set as environment variables.
 func initVault() error {
 	conf := vault.DefaultConfig() // Reads VAULT_ADDR from env (e.g., http://127.0.0.1:8200)
 
@@ -52,18 +53,21 @@ func initVault() error {
 }
 
 // getSecret fetches a secret from Vault's KVv2 store.
-// Assumes secrets are stored at a path like 'kv/data/cloudpulse' (Vault CLI uses 'kv/cloudpulse').
-// The actual path for KVv2 API is 'kv/data/your-path'.
 func getSecret(secretPath, key string) (string, error) {
 	if vaultClient == nil {
 		return "", fmt.Errorf("vault client not initialized")
 	}
 
-	// For KVv2, the API path includes "/data/" after the mount path.
-	// If your mount path is 'kv', and you put secrets at 'cloudpulse',
-	// the API path is 'kv/data/cloudpulse'.
-	log.Printf("Fetching secret '%s' from Vault path '%s'\n", key, secretPath)
-	secret, err := vaultClient.KVv2(strings.Split(secretPath, "/")[0]).Get(context.Background(), strings.Join(strings.Split(secretPath, "/")[1:], "/"))
+	// For KVv2, the API path is 'mount/data/path'. We need to extract mount and path.
+	parts := strings.SplitN(secretPath, "/", 2)
+	if len(parts) != 2 {
+		return "", fmt.Errorf("invalid secret path format '%s', expected 'mount/path'", secretPath)
+	}
+	mountPath := parts[0]
+	pathWithinMount := parts[1]
+
+	log.Printf("Fetching secret '%s' from Vault mount '%s' path '%s'\n", key, mountPath, pathWithinMount)
+	secret, err := vaultClient.KVv2(mountPath).Get(context.Background(), pathWithinMount)
 	if err != nil {
 		return "", fmt.Errorf("failed to get secret from Vault (path: %s): %w", secretPath, err)
 	}
@@ -83,8 +87,7 @@ func getSecret(secretPath, key string) (string, error) {
 
 // --- AWS Functions ---
 
-// initAWS initializes the AWS CloudWatch client.
-// It relies on the IAM role attached to the EC2 instance.
+// initAWS initializes the AWS CloudWatch client and fetches the instance ID.
 func initAWS() error {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -92,28 +95,44 @@ func initAWS() error {
 	}
 	cwClient = cloudwatch.NewFromConfig(cfg)
 
-	// Fetch instance ID from EC2 metadata service (free)
-	// This is a common way to get the instance ID from within the EC2 instance.
-	// Ensure the EC2 instance has network access to the metadata service (169.254.169.254).
-	metadataClient := config.NewEC2MetadataClient(cfg)
-	id, err := metadataClient.GetMetadata(context.TODO(), &config.EC2GetMetadataInput{
-		Path: "instance-id",
-	})
+	// Fetch instance ID using HTTP GET from metadata service (simpler & reliable)
+	metadataURL := "http://169.254.169.254/latest/meta-data/instance-id"
+	// Set a timeout for the HTTP request to avoid hangs if metadata service is not available
+	client := http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(metadataURL)
+
 	if err != nil {
-		// Fallback for local testing or if metadata service is unavailable
-		log.Printf("Could not fetch instance ID from metadata service: %v. Using 'i-placeholder' for local testing.", err)
-		instanceID = os.Getenv("EC2_INSTANCE_ID_OVERRIDE") // Allow override for local
+		log.Printf("Could not fetch EC2 instance ID via HTTP: %v. Using override or placeholder.", err)
+		instanceID = os.Getenv("EC2_INSTANCE_ID_OVERRIDE")
 		if instanceID == "" {
-			log.Println("EC2_INSTANCE_ID_OVERRIDE not set, EC2 metrics will likely fail if not on EC2.")
-			// It's okay to proceed, the /api/ec2-usage endpoint will just return an error or no data.
+			log.Println("EC2_INSTANCE_ID_OVERRIDE not set. EC2 metrics will likely fail unless on EC2.")
 		} else {
 			log.Printf("Using EC2_INSTANCE_ID_OVERRIDE: %s", instanceID)
 		}
-	} else {
-		instanceID = id
+		// We return nil here, allowing the app to start even if metadata isn't found
+		// (useful for local testing, but the /api/ec2-usage will fail).
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("Metadata service returned non-200 status: %d. Using override or placeholder.", resp.StatusCode)
+		instanceID = os.Getenv("EC2_INSTANCE_ID_OVERRIDE")
+		if instanceID == "" {
+			log.Println("EC2_INSTANCE_ID_OVERRIDE not set. EC2 metrics will likely fail.")
+		} else {
+			log.Printf("Using EC2_INSTANCE_ID_OVERRIDE: %s", instanceID)
+		}
+		return nil
 	}
 
-	log.Println("AWS CloudWatch client initialized. Instance ID determined as:", instanceID)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read EC2 instance ID response: %w", err)
+	}
+	instanceID = string(body)
+
+	log.Println("AWS CloudWatch client initialized. Instance ID:", instanceID)
 	return nil
 }
 
@@ -121,9 +140,7 @@ func initAWS() error {
 
 // initGitHub initializes the GitHub client using a token from Vault.
 func initGitHub() error {
-	// Path in Vault: kv/cloudpulse, key: github_token
-	// The getSecret function expects the full path for KVv2, e.g., "kv/data/cloudpulse"
-	// Let's assume the mount is 'kv' and the secret path within that mount is 'cloudpulse'
+	// We expect the path to be like 'kv/cloudpulse'
 	githubToken, err := getSecret("kv/cloudpulse", "github_token")
 	if err != nil {
 		return fmt.Errorf("failed to get GitHub token from Vault: %w", err)
@@ -145,12 +162,10 @@ func initGitHub() error {
 
 // --- API Handlers ---
 
-// ec2UsageHandler fetches basic CloudWatch metrics for the EC2 instance.
-// Uses GetMetricData for efficiency (one API call for multiple metrics).
-// Fetches 5-minute average CPUUtilization and sum of NetworkIn/Out.
+// ec2UsageHandler fetches basic CloudWatch metrics.
 func ec2UsageHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*") // Allow all for simplicity
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	if cwClient == nil {
 		http.Error(w, `{"error": "AWS client not initialized"}`, http.StatusInternalServerError)
@@ -163,47 +178,47 @@ func ec2UsageHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	endTime := time.Now()
-	startTime := endTime.Add(-10 * time.Minute) // Look at the last 10 minutes for better chance of data
+	startTime := endTime.Add(-10 * time.Minute)
 
 	metricQueries := []types.MetricDataQuery{
 		{
-			Id: github.String("cpu"),
+			Id: aws.String("cpu"), // <-- Use aws.String
 			MetricStat: &types.MetricStat{
 				Metric: &types.Metric{
-					Namespace:  github.String("AWS/EC2"),
-					MetricName: github.String("CPUUtilization"),
-					Dimensions: []types.Dimension{{Name: github.String("InstanceId"), Value: github.String(instanceID)}},
+					Namespace:  aws.String("AWS/EC2"),                                                              // <-- Use aws.String
+					MetricName: aws.String("CPUUtilization"),                                                       // <-- Use aws.String
+					Dimensions: []types.Dimension{{Name: aws.String("InstanceId"), Value: aws.String(instanceID)}}, // <-- Use aws.String
 				},
-				Period: github.Int32(300), // 5-minute period
-				Stat:   github.String("Average"),
+				Period: aws.Int32(300),        // <-- Use aws.Int32
+				Stat:   aws.String("Average"), // <-- Use aws.String
 			},
-			ReturnData: github.Bool(true),
+			ReturnData: aws.Bool(true), // <-- Use aws.Bool
 		},
 		{
-			Id: github.String("netIn"),
+			Id: aws.String("netIn"), // <-- Use aws.String
 			MetricStat: &types.MetricStat{
 				Metric: &types.Metric{
-					Namespace:  github.String("AWS/EC2"),
-					MetricName: github.String("NetworkIn"),
-					Dimensions: []types.Dimension{{Name: github.String("InstanceId"), Value: github.String(instanceID)}},
+					Namespace:  aws.String("AWS/EC2"),
+					MetricName: aws.String("NetworkIn"),
+					Dimensions: []types.Dimension{{Name: aws.String("InstanceId"), Value: aws.String(instanceID)}},
 				},
-				Period: github.Int32(300),
-				Stat:   github.String("Sum"),
+				Period: aws.Int32(300), // <-- Use aws.Int32
+				Stat:   aws.String("Sum"),
 			},
-			ReturnData: github.Bool(true),
+			ReturnData: aws.Bool(true), // <-- Use aws.Bool
 		},
 		{
-			Id: github.String("netOut"),
+			Id: aws.String("netOut"), // <-- Use aws.String
 			MetricStat: &types.MetricStat{
 				Metric: &types.Metric{
-					Namespace:  github.String("AWS/EC2"),
-					MetricName: github.String("NetworkOut"),
-					Dimensions: []types.Dimension{{Name: github.String("InstanceId"), Value: github.String(instanceID)}},
+					Namespace:  aws.String("AWS/EC2"),
+					MetricName: aws.String("NetworkOut"),
+					Dimensions: []types.Dimension{{Name: aws.String("InstanceId"), Value: aws.String(instanceID)}},
 				},
-				Period: github.Int32(300),
-				Stat:   github.String("Sum"),
+				Period: aws.Int32(300), // <-- Use aws.Int32
+				Stat:   aws.String("Sum"),
 			},
-			ReturnData: github.Bool(true),
+			ReturnData: aws.Bool(true), // <-- Use aws.Bool
 		},
 	}
 
@@ -211,7 +226,7 @@ func ec2UsageHandler(w http.ResponseWriter, r *http.Request) {
 		StartTime:         &startTime,
 		EndTime:           &endTime,
 		MetricDataQueries: metricQueries,
-		ScanBy:            types.ScanByTimestampDescending, // Get latest data first
+		ScanBy:            types.ScanByTimestampDescending,
 	})
 
 	if err != nil {
@@ -221,28 +236,26 @@ func ec2UsageHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := make(map[string]interface{})
-	result["InstanceID"] = instanceID // Include instance ID in response
+	result["InstanceID"] = instanceID // Include instance ID
 
 	for _, mdr := range resp.MetricDataResults {
 		id := *mdr.Id
-		if len(mdr.Values) > 0 && len(mdr.Timestamps) > 0 {
-			result[id] = mdr.Values[0] // Get the first (latest) value
-			result[id+"_Timestamp"] = mdr.Timestamps[0].Format(time.RFC3339)
+		if len(mdr.Values) > 0 {
+			result[id] = mdr.Values[0]
+			result[id+"_Timestamp"] = mdr.Timestamps[0].Format(time.RFC3339) // Use a standard format
 		} else {
 			result[id] = "N/A"
-			log.Printf("No data points returned for metric: %s", id)
 		}
 	}
 	if len(resp.MetricDataResults) == 0 {
 		log.Println("CloudWatch GetMetricData returned no results.")
-		result["message"] = "No metric data returned from CloudWatch. This can happen if the instance is new or metrics are not yet available."
+		result["message"] = "No metric data returned from CloudWatch."
 	}
 
 	json.NewEncoder(w).Encode(result)
 }
 
-// githubUsersHandler fetches collaborators from the configured GitHub repository.
-// Requires a GitHub token with 'repo' scope (or 'read:org' for org repos).
+// githubUsersHandler fetches collaborators from a GitHub repository.
 func githubUsersHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -256,7 +269,7 @@ func githubUsersHandler(w http.ResponseWriter, r *http.Request) {
 		context.Background(),
 		githubOwner,
 		githubRepo,
-		&github.ListCollaboratorsOptions{ListOptions: github.ListOptions{PerPage: 100}}, // Get up to 100
+		&github.ListCollaboratorsOptions{ListOptions: github.ListOptions{PerPage: 100}},
 	)
 
 	if err != nil {
@@ -274,13 +287,12 @@ func githubUsersHandler(w http.ResponseWriter, r *http.Request) {
 
 	var userInfos []UserInfo
 	for _, user := range users {
-		userInfo := UserInfo{
+		userInfos = append(userInfos, UserInfo{
 			Login:     safeDeref(user.Login),
 			AvatarURL: safeDeref(user.AvatarURL),
 			HTMLURL:   safeDeref(user.HTMLURL),
 			RoleName:  safeDeref(user.RoleName),
-		}
-		userInfos = append(userInfos, userInfo)
+		})
 	}
 
 	json.NewEncoder(w).Encode(userInfos)
@@ -297,50 +309,38 @@ func safeDeref(s *string) string {
 // --- Main Application ---
 
 func main() {
-	log.Println("Starting CloudPulse Backend v2...")
+	log.Println("Starting CloudPulse Backend v3 (Corrected)...")
 
-	// 1. Initialize Vault (Needs VAULT_ADDR & VAULT_TOKEN env vars)
-	// VAULT_ADDR typically http://127.0.0.1:8200 if Vault container is port-mapped on host
 	if err := initVault(); err != nil {
-		log.Fatalf("FATAL: Failed to initialize Vault: %v. Ensure VAULT_ADDR and VAULT_TOKEN are set.", err)
+		log.Fatalf("FATAL: Failed to initialize Vault: %v", err)
 	}
-
-	// 2. Initialize AWS (Needs IAM Role on EC2 or local credentials)
 	if err := initAWS(); err != nil {
 		log.Fatalf("FATAL: Failed to initialize AWS SDK: %v", err)
 	}
-
-	// 3. Initialize GitHub (Needs GITHUB_OWNER & GITHUB_REPO env vars, and token in Vault)
-	// The Vault path for github_token is assumed to be 'kv/cloudpulse'
 	if err := initGitHub(); err != nil {
 		log.Fatalf("FATAL: Failed to initialize GitHub client: %v", err)
 	}
 
-	// 4. Setup HTTP Server and Routes
-	// Serve static files from the "./frontend" directory
 	fs := http.FileServer(http.Dir("./frontend"))
-	http.Handle("/", fs) // Serve index.html and other assets at the root
+	http.Handle("/", fs)
 
-	// API Endpoints
 	http.HandleFunc("/api/ec2-usage", ec2UsageHandler)
 	http.HandleFunc("/api/github-users", githubUsersHandler)
-	// Placeholder for Free Tier info - frontend handles this with links
 	http.HandleFunc("/api/free-tier-usage", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		json.NewEncoder(w).Encode(map[string]string{
-			"message": "Monitor AWS Free Tier usage via AWS Budgets and the Billing Console. Programmatic access can incur costs.",
+			"message": "Monitor AWS Free Tier usage via AWS Budgets and the Billing Console.",
 		})
 	})
 
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080" // Default port
+		port = "8080"
 	}
 
 	log.Printf("Server listening on :%s...", port)
-	// The server will serve static files from './frontend' and API endpoints under '/api/'
-	err := http.ListenAndServe(":"+port, nil) // Use DefaultServeMux
+	err := http.ListenAndServe(":"+port, nil)
 	if err != nil {
 		log.Fatalf("FATAL: Server failed to start: %v", err)
 	}

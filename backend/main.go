@@ -3,247 +3,345 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"fmt" // Required for io.ReadAll
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/costexplorer"
-	"github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
-	"github.com/google/go-github/v53/github"
-	"github.com/hashicorp/vault/api"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
+	"github.com/google/go-github/v58/github" // Ensure this matches your go.mod
+	vault "github.com/hashicorp/vault/api"
 	"golang.org/x/oauth2"
 )
 
-// Config structure to hold all environment configuration
-type Config struct {
-	Stage              string
-	AWSRegion          string
-	LogLevel           string
-	Port               string
-	VaultAddr          string
-	VaultToken         string
-	AWSAccessKeyID     string
-	AWSSecretAccessKey string
-}
-
-// Prometheus metrics
+// Global variables for clients - initialize once
 var (
-	requestCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "cloudpulse_requests_total",
-			Help: "Total number of requests handled",
-		},
-		[]string{"endpoint", "stage"},
-	)
-
-	requestLatency = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "cloudpulse_request_duration_seconds",
-			Help:    "Request latency in seconds",
-			Buckets: prometheus.DefBuckets,
-		},
-		[]string{"endpoint", "stage"},
-	)
+	cwClient     *cloudwatch.Client
+	githubClient *github.Client
+	vaultClient  *vault.Client
+	instanceID   string // Store EC2 Instance ID
+	githubOwner  string // GitHub Repo Owner
+	githubRepo   string // GitHub Repo Name
 )
 
-// Register Prometheus metrics
-func init() {
-	prometheus.MustRegister(requestCounter)
-	prometheus.MustRegister(requestLatency)
-}
+// --- Vault Functions ---
 
-// Load environment configuration with validation
-func loadConfig() Config {
-	cfg := Config{
-		Stage:      getEnv("STAGE", "testing"),
-		AWSRegion:  getEnv("AWS_REGION", "us-east-1"),
-		LogLevel:   getEnv("LOG_LEVEL", "info"),
-		Port:       getEnv("PORT", "8080"),
-		VaultAddr:  getEnv("VAULT_ADDR", "http://localhost:8200"),
-		VaultToken: getEnv("VAULT_TOKEN", "root"),
-	}
+// initVault initializes the Vault client.
+// VAULT_ADDR and VAULT_TOKEN must be set as environment variables.
+func initVault() error {
+	conf := vault.DefaultConfig() // Reads VAULT_ADDR from env (e.g., http://127.0.0.1:8200)
 
-	// Validate stage value
-	allowedStages := []string{"testing", "staging", "production"}
-	isValidStage := false
-	for _, stage := range allowedStages {
-		if cfg.Stage == stage {
-			isValidStage = true
-			break
-		}
-	}
-	if !isValidStage {
-		log.Fatalf("Invalid STAGE: %s. Must be one of: %v", cfg.Stage, allowedStages)
-	}
-
-	// Ensure Vault credentials are provided
-	if cfg.VaultAddr == "" || cfg.VaultToken == "" {
-		log.Fatal("VAULT_ADDR and VAULT_TOKEN are required")
-	}
-
-	return cfg
-}
-
-// Retrieve environment variable with default fallback
-func getEnv(key, defaultValue string) string {
-	if value, exists := os.LookupEnv(key); exists {
-		return value
-	}
-	return defaultValue
-}
-
-// Fetch secret from Vault for the given path
-func getSecretFromVault(vaultAddr, vaultToken, path string) (string, error) {
-	config := &api.Config{Address: vaultAddr}
-	client, err := api.NewClient(config)
+	var err error
+	vaultClient, err = vault.NewClient(conf)
 	if err != nil {
-		return "", fmt.Errorf("failed to create Vault client: %v", err)
+		return fmt.Errorf("failed to create vault client: %w", err)
 	}
 
-	client.SetToken(vaultToken)
-	secret, err := client.Logical().Read(path)
+	token := os.Getenv("VAULT_TOKEN")
+	if token == "" {
+		return fmt.Errorf("VAULT_TOKEN environment variable not set")
+	}
+	vaultClient.SetToken(token)
+
+	log.Println("Vault client initialized successfully.")
+	return nil
+}
+
+// getSecret fetches a secret from Vault's KVv2 store.
+// Assumes secrets are stored at a path like 'kv/data/cloudpulse' (Vault CLI uses 'kv/cloudpulse').
+// The actual path for KVv2 API is 'kv/data/your-path'.
+func getSecret(secretPath, key string) (string, error) {
+	if vaultClient == nil {
+		return "", fmt.Errorf("vault client not initialized")
+	}
+
+	// For KVv2, the API path includes "/data/" after the mount path.
+	// If your mount path is 'kv', and you put secrets at 'cloudpulse',
+	// the API path is 'kv/data/cloudpulse'.
+	log.Printf("Fetching secret '%s' from Vault path '%s'\n", key, secretPath)
+	secret, err := vaultClient.KVv2(strings.Split(secretPath, "/")[0]).Get(context.Background(), strings.Join(strings.Split(secretPath, "/")[1:], "/"))
 	if err != nil {
-		return "", fmt.Errorf("failed to read secret from Vault at %s: %v", path, err)
+		return "", fmt.Errorf("failed to get secret from Vault (path: %s): %w", secretPath, err)
 	}
 
 	if secret == nil || secret.Data == nil {
-		return "", fmt.Errorf("no secret found at path %s", path)
+		return "", fmt.Errorf("no data found at secret path '%s'", secretPath)
 	}
 
-	value, ok := secret.Data["value"].(string)
+	value, ok := secret.Data[key].(string)
 	if !ok {
-		return "", fmt.Errorf("secret at path %s does not contain a 'value' field", path)
+		return "", fmt.Errorf("secret key '%s' not found or not a string in path '%s'", key, secretPath)
 	}
 
+	log.Printf("Successfully fetched secret '%s' from Vault.", key)
 	return value, nil
 }
 
-func main() {
-	cfg := loadConfig()
-	log.Printf("Starting CloudPulse in %s stage", cfg.Stage)
+// --- AWS Functions ---
 
-	// Retrieve secrets from Vault
-	secretPathPrefix := fmt.Sprintf("secret/cloudpulse/%s", cfg.Stage)
-
-	githubToken, err := getSecretFromVault(cfg.VaultAddr, cfg.VaultToken, secretPathPrefix+"/GITHUB_TOKEN")
+// initAWS initializes the AWS CloudWatch client.
+// It relies on the IAM role attached to the EC2 instance.
+func initAWS() error {
+	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
-		log.Fatalf("Failed to fetch GITHUB_TOKEN: %v", err)
+		return fmt.Errorf("failed to load AWS config: %w", err)
+	}
+	cwClient = cloudwatch.NewFromConfig(cfg)
+
+	// Fetch instance ID from EC2 metadata service (free)
+	// This is a common way to get the instance ID from within the EC2 instance.
+	// Ensure the EC2 instance has network access to the metadata service (169.254.169.254).
+	metadataClient := config.NewEC2MetadataClient(cfg)
+	id, err := metadataClient.GetMetadata(context.TODO(), &config.EC2GetMetadataInput{
+		Path: "instance-id",
+	})
+	if err != nil {
+		// Fallback for local testing or if metadata service is unavailable
+		log.Printf("Could not fetch instance ID from metadata service: %v. Using 'i-placeholder' for local testing.", err)
+		instanceID = os.Getenv("EC2_INSTANCE_ID_OVERRIDE") // Allow override for local
+		if instanceID == "" {
+			log.Println("EC2_INSTANCE_ID_OVERRIDE not set, EC2 metrics will likely fail if not on EC2.")
+			// It's okay to proceed, the /api/ec2-usage endpoint will just return an error or no data.
+		} else {
+			log.Printf("Using EC2_INSTANCE_ID_OVERRIDE: %s", instanceID)
+		}
+	} else {
+		instanceID = id
 	}
 
-	cfg.AWSAccessKeyID, err = getSecretFromVault(cfg.VaultAddr, cfg.VaultToken, secretPathPrefix+"/AWS_ACCESS_KEY_ID")
+	log.Println("AWS CloudWatch client initialized. Instance ID determined as:", instanceID)
+	return nil
+}
+
+// --- GitHub Functions ---
+
+// initGitHub initializes the GitHub client using a token from Vault.
+func initGitHub() error {
+	// Path in Vault: kv/cloudpulse, key: github_token
+	// The getSecret function expects the full path for KVv2, e.g., "kv/data/cloudpulse"
+	// Let's assume the mount is 'kv' and the secret path within that mount is 'cloudpulse'
+	githubToken, err := getSecret("kv/cloudpulse", "github_token")
 	if err != nil {
-		log.Fatalf("Failed to fetch AWS_ACCESS_KEY_ID: %v", err)
+		return fmt.Errorf("failed to get GitHub token from Vault: %w", err)
 	}
 
-	cfg.AWSSecretAccessKey, err = getSecretFromVault(cfg.VaultAddr, cfg.VaultToken, secretPathPrefix+"/AWS_SECRET_ACCESS_KEY")
-	if err != nil {
-		log.Fatalf("Failed to fetch AWS_SECRET_ACCESS_KEY: %v", err)
+	githubOwner = os.Getenv("GITHUB_OWNER")
+	githubRepo = os.Getenv("GITHUB_REPO")
+	if githubOwner == "" || githubRepo == "" {
+		return fmt.Errorf("GITHUB_OWNER and GITHUB_REPO environment variables must be set")
 	}
 
-	// Initialize GitHub client with token authentication
-	ctx := context.Background()
 	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: githubToken})
-	tc := oauth2.NewClient(ctx, ts)
-	githubClient := github.NewClient(tc)
+	tc := oauth2.NewClient(context.Background(), ts)
+	githubClient = github.NewClient(tc)
 
-	// Load AWS SDK config using credentials from Vault
-	awsCfg, err := config.LoadDefaultConfig(ctx,
-		config.WithRegion(cfg.AWSRegion),
-		config.WithCredentialsProvider(aws.CredentialsProviderFunc(func(ctx context.Context) (aws.Credentials, error) {
-			return aws.Credentials{
-				AccessKeyID:     cfg.AWSAccessKeyID,
-				SecretAccessKey: cfg.AWSSecretAccessKey,
-			}, nil
-		})),
-	)
-	if err != nil {
-		log.Fatalf("Unable to load AWS SDK config: %v", err)
+	log.Println("GitHub client initialized for repo:", githubOwner+"/"+githubRepo)
+	return nil
+}
+
+// --- API Handlers ---
+
+// ec2UsageHandler fetches basic CloudWatch metrics for the EC2 instance.
+// Uses GetMetricData for efficiency (one API call for multiple metrics).
+// Fetches 5-minute average CPUUtilization and sum of NetworkIn/Out.
+func ec2UsageHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*") // Allow all for simplicity
+
+	if cwClient == nil {
+		http.Error(w, `{"error": "AWS client not initialized"}`, http.StatusInternalServerError)
+		return
+	}
+	if instanceID == "" {
+		http.Error(w, `{"error": "EC2 Instance ID not determined. Metrics unavailable."}`, http.StatusServiceUnavailable)
+		log.Println("EC2 Instance ID is empty, cannot fetch metrics.")
+		return
 	}
 
-	awsClient := costexplorer.NewFromConfig(awsCfg)
+	endTime := time.Now()
+	startTime := endTime.Add(-10 * time.Minute) // Look at the last 10 minutes for better chance of data
 
-	// Create default frontend if not exists
-	if _, err := os.Stat("frontend"); os.IsNotExist(err) {
-		log.Println("Creating default frontend...")
-		os.MkdirAll("frontend", 0755)
-		os.WriteFile("frontend/index.html", []byte("<h1>Welcome to CloudPulse</h1><p>Go to /api/costs or /api/github.</p>"), 0644)
-	}
-
-	// Expose Prometheus metrics endpoint
-	http.Handle("/metrics", promhttp.Handler())
-
-	// Handler for AWS cost explorer API
-	http.HandleFunc("/api/costs", func(w http.ResponseWriter, r *http.Request) {
-		startTime := time.Now()
-		requestCounter.WithLabelValues("/api/costs", cfg.Stage).Inc()
-		defer func() {
-			duration := time.Since(startTime).Seconds()
-			requestLatency.WithLabelValues("/api/costs", cfg.Stage).Observe(duration)
-		}()
-
-		// Define 30-day time range for cost retrieval
-		end := time.Now()
-		start := end.AddDate(0, 0, -30)
-
-		input := &costexplorer.GetCostAndUsageInput{
-			TimePeriod: &types.DateInterval{
-				Start: aws.String(start.Format("2006-01-02")),
-				End:   aws.String(end.Format("2006-01-02")),
-			},
-			Granularity: types.GranularityMonthly,
-			Metrics:     []string{"UnblendedCost"},
-			GroupBy: []types.GroupDefinition{
-				{
-					Type: types.GroupDefinitionTypeDimension,
-					Key:  aws.String("SERVICE"),
+	metricQueries := []types.MetricDataQuery{
+		{
+			Id: github.String("cpu"),
+			MetricStat: &types.MetricStat{
+				Metric: &types.Metric{
+					Namespace:  github.String("AWS/EC2"),
+					MetricName: github.String("CPUUtilization"),
+					Dimensions: []types.Dimension{{Name: github.String("InstanceId"), Value: github.String(instanceID)}},
 				},
+				Period: github.Int32(300), // 5-minute period
+				Stat:   github.String("Average"),
 			},
-		}
+			ReturnData: github.Bool(true),
+		},
+		{
+			Id: github.String("netIn"),
+			MetricStat: &types.MetricStat{
+				Metric: &types.Metric{
+					Namespace:  github.String("AWS/EC2"),
+					MetricName: github.String("NetworkIn"),
+					Dimensions: []types.Dimension{{Name: github.String("InstanceId"), Value: github.String(instanceID)}},
+				},
+				Period: github.Int32(300),
+				Stat:   github.String("Sum"),
+			},
+			ReturnData: github.Bool(true),
+		},
+		{
+			Id: github.String("netOut"),
+			MetricStat: &types.MetricStat{
+				Metric: &types.Metric{
+					Namespace:  github.String("AWS/EC2"),
+					MetricName: github.String("NetworkOut"),
+					Dimensions: []types.Dimension{{Name: github.String("InstanceId"), Value: github.String(instanceID)}},
+				},
+				Period: github.Int32(300),
+				Stat:   github.String("Sum"),
+			},
+			ReturnData: github.Bool(true),
+		},
+	}
 
-		result, err := awsClient.GetCostAndUsage(ctx, input)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Error fetching AWS costs: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(result)
+	resp, err := cwClient.GetMetricData(context.TODO(), &cloudwatch.GetMetricDataInput{
+		StartTime:         &startTime,
+		EndTime:           &endTime,
+		MetricDataQueries: metricQueries,
+		ScanBy:            types.ScanByTimestampDescending, // Get latest data first
 	})
 
-	// Handler for GitHub user data
-	http.HandleFunc("/api/github", func(w http.ResponseWriter, r *http.Request) {
-		startTime := time.Now()
-		requestCounter.WithLabelValues("/api/github", cfg.Stage).Inc()
-		defer func() {
-			duration := time.Since(startTime).Seconds()
-			requestLatency.WithLabelValues("/api/github", cfg.Stage).Observe(duration)
-		}()
+	if err != nil {
+		log.Printf("Error getting CloudWatch data: %v", err)
+		http.Error(w, fmt.Sprintf(`{"error": "Error getting CloudWatch data: %v"}`, err), http.StatusInternalServerError)
+		return
+	}
 
-		user, _, err := githubClient.Users.Get(ctx, "")
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Error fetching GitHub user: %v", err), http.StatusInternalServerError)
-			return
+	result := make(map[string]interface{})
+	result["InstanceID"] = instanceID // Include instance ID in response
+
+	for _, mdr := range resp.MetricDataResults {
+		id := *mdr.Id
+		if len(mdr.Values) > 0 && len(mdr.Timestamps) > 0 {
+			result[id] = mdr.Values[0] // Get the first (latest) value
+			result[id+"_Timestamp"] = mdr.Timestamps[0].Format(time.RFC3339)
+		} else {
+			result[id] = "N/A"
+			log.Printf("No data points returned for metric: %s", id)
 		}
+	}
+	if len(resp.MetricDataResults) == 0 {
+		log.Println("CloudWatch GetMetricData returned no results.")
+		result["message"] = "No metric data returned from CloudWatch. This can happen if the instance is new or metrics are not yet available."
+	}
 
-		response := map[string]string{
-			"login": user.GetLogin(),
-			"name":  user.GetName(),
+	json.NewEncoder(w).Encode(result)
+}
+
+// githubUsersHandler fetches collaborators from the configured GitHub repository.
+// Requires a GitHub token with 'repo' scope (or 'read:org' for org repos).
+func githubUsersHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	if githubClient == nil {
+		http.Error(w, `{"error": "GitHub client not initialized"}`, http.StatusInternalServerError)
+		return
+	}
+
+	users, _, err := githubClient.Repositories.ListCollaborators(
+		context.Background(),
+		githubOwner,
+		githubRepo,
+		&github.ListCollaboratorsOptions{ListOptions: github.ListOptions{PerPage: 100}}, // Get up to 100
+	)
+
+	if err != nil {
+		log.Printf("Error getting GitHub users: %v", err)
+		http.Error(w, fmt.Sprintf(`{"error": "Error getting GitHub users: %v"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	type UserInfo struct {
+		Login     string `json:"login"`
+		AvatarURL string `json:"avatar_url"`
+		HTMLURL   string `json:"html_url"`
+		RoleName  string `json:"role_name"`
+	}
+
+	var userInfos []UserInfo
+	for _, user := range users {
+		userInfo := UserInfo{
+			Login:     safeDeref(user.Login),
+			AvatarURL: safeDeref(user.AvatarURL),
+			HTMLURL:   safeDeref(user.HTMLURL),
+			RoleName:  safeDeref(user.RoleName),
 		}
+		userInfos = append(userInfos, userInfo)
+	}
 
+	json.NewEncoder(w).Encode(userInfos)
+}
+
+// safeDeref safely dereferences a string pointer, returning "" if nil.
+func safeDeref(s *string) string {
+	if s != nil {
+		return *s
+	}
+	return ""
+}
+
+// --- Main Application ---
+
+func main() {
+	log.Println("Starting CloudPulse Backend v2...")
+
+	// 1. Initialize Vault (Needs VAULT_ADDR & VAULT_TOKEN env vars)
+	// VAULT_ADDR typically http://127.0.0.1:8200 if Vault container is port-mapped on host
+	if err := initVault(); err != nil {
+		log.Fatalf("FATAL: Failed to initialize Vault: %v. Ensure VAULT_ADDR and VAULT_TOKEN are set.", err)
+	}
+
+	// 2. Initialize AWS (Needs IAM Role on EC2 or local credentials)
+	if err := initAWS(); err != nil {
+		log.Fatalf("FATAL: Failed to initialize AWS SDK: %v", err)
+	}
+
+	// 3. Initialize GitHub (Needs GITHUB_OWNER & GITHUB_REPO env vars, and token in Vault)
+	// The Vault path for github_token is assumed to be 'kv/cloudpulse'
+	if err := initGitHub(); err != nil {
+		log.Fatalf("FATAL: Failed to initialize GitHub client: %v", err)
+	}
+
+	// 4. Setup HTTP Server and Routes
+	// Serve static files from the "./frontend" directory
+	fs := http.FileServer(http.Dir("./frontend"))
+	http.Handle("/", fs) // Serve index.html and other assets at the root
+
+	// API Endpoints
+	http.HandleFunc("/api/ec2-usage", ec2UsageHandler)
+	http.HandleFunc("/api/github-users", githubUsersHandler)
+	// Placeholder for Free Tier info - frontend handles this with links
+	http.HandleFunc("/api/free-tier-usage", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		json.NewEncoder(w).Encode(map[string]string{
+			"message": "Monitor AWS Free Tier usage via AWS Budgets and the Billing Console. Programmatic access can incur costs.",
+		})
 	})
 
-	// Serve static frontend files
-	http.Handle("/", http.FileServer(http.Dir("frontend")))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080" // Default port
+	}
 
-	// Start HTTP server
-	log.Printf("Server starting on :%s", cfg.Port)
-	http.ListenAndServe(":"+cfg.Port, nil)
+	log.Printf("Server listening on :%s...", port)
+	// The server will serve static files from './frontend' and API endpoints under '/api/'
+	err := http.ListenAndServe(":"+port, nil) // Use DefaultServeMux
+	if err != nil {
+		log.Fatalf("FATAL: Server failed to start: %v", err)
+	}
 }

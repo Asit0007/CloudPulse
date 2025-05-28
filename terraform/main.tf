@@ -1,217 +1,164 @@
-# Configure the AWS provider with a specific version for consistency
 terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 4.0"
+      version = "~> 5.0" # Specify a compatible version
     }
   }
+  required_version = ">= 1.0" # Specify a compatible Terraform version
 }
 
 provider "aws" {
-  region = "us-west-2"
+  region = var.aws_region
 }
 
+# --- Networking ---
+# Using default VPC and subnets for simplicity to stay within Free Tier.
+# If you need a custom VPC, ensure it's configured correctly.
 
-# Create an ECR repository for the CloudPulse application
-resource "aws_ecr_repository" "cloudpulse" {
-  name = "cloudpulse"
-  # Consider adding tags for better resource tracking, e.g., tags = { Project = "CloudPulse" }
+data "aws_vpc" "default" {
+  default = true
 }
 
-# Create a VPC only if the workspace is "production"
-resource "aws_vpc" "main" {
-  count                = terraform.workspace == "production" ? 1 : 0
-  cidr_block           = "10.0.0.0/16"
-  enable_dns_hostnames = true
-  enable_dns_support   = true
-  tags = {
-    Name = "cloudpulse-vpc"
+data "aws_subnets" "default" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default.id]
   }
 }
 
-# Fetch available availability zones in the region
-data "aws_availability_zones" "available" {}
+# --- Security Group ---
+resource "aws_security_group" "cloudpulse_sg" {
+  name        = "${var.project_name}-sg"
+  description = "Allow HTTP, HTTPS, and SSH for CloudPulse"
+  vpc_id      = data.aws_vpc.default.id // Use default VPC
 
-# Create a public subnet in the first availability zone
-resource "aws_subnet" "public" {
-  count                   = terraform.workspace == "production" ? 1 : 0
-  vpc_id                  = aws_vpc.main[0].id
-  cidr_block              = "10.0.1.0/24"
-  availability_zone       = data.aws_availability_zones.available.names[0]
-  map_public_ip_on_launch = true
-  tags = {
-    Name = "cloudpulse-public-0"
-  }
-}
-
-# Create an internet gateway for the VPC
-resource "aws_internet_gateway" "main" {
-  count  = terraform.workspace == "production" ? 1 : 0
-  vpc_id = aws_vpc.main[0].id
-  tags = {
-    Name = "cloudpulse-igw"
-  }
-}
-
-# Create a route table for the public subnet
-resource "aws_route_table" "public" {
-  count  = terraform.workspace == "production" ? 1 : 0
-  vpc_id = aws_vpc.main[0].id
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.main[0].id
-  }
-  tags = {
-    Name = "cloudpulse-public-rt"
-  }
-}
-
-# Associate the route table with the public subnet
-resource "aws_route_table_association" "public" {
-  count          = terraform.workspace == "production" ? 1 : 0
-  subnet_id      = aws_subnet.public[0].id
-  route_table_id = aws_route_table.public[0].id
-}
-
-# Create a security group for the EC2 instance
-# NOTE: For production, consider restricting ingress to specific IP ranges instead of 0.0.0.0/0 for enhanced security
-resource "aws_security_group" "ec2_sg" {
-  count  = terraform.workspace == "production" ? 1 : 0
-  vpc_id = aws_vpc.main[0].id
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]  # SSH access from anywhere
+    cidr_blocks = [var.ssh_access_cidr] # Restrict SSH access to your IP
   }
+
   ingress {
-    from_port   = 8080
-    to_port     = 8080
+    from_port   = 80 # For HTTP access to the application
+    to_port     = 80
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]  # Application port
+    cidr_blocks = ["0.0.0.0/0"]
   }
+
   ingress {
-    from_port   = 8200
+    from_port   = 443 # For future HTTPS
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  
+  # Allow Vault access from the EC2 instance itself (for the app container)
+  # and potentially from your SSH IP for initial setup/management.
+  ingress {
+    description = "Allow Vault access from within EC2 and trusted SSH IP"
+    from_port   = 8200 
     to_port     = 8200
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]  # Vault port
+    cidr_blocks = [var.ssh_access_cidr] # Your IP for management
+    # self = true # This would allow traffic from instances within this SG.
+    # For container-to-container on same host, Docker networking is used.
+    # This rule is more for accessing Vault UI from your trusted IP.
   }
+
+
   egress {
     from_port   = 0
     to_port     = 0
-    protocol    = "-1"           # Allow all outbound traffic
+    protocol    = "-1" # Allow all outbound traffic
     cidr_blocks = ["0.0.0.0/0"]
   }
+
   tags = {
-    Name = "cloudpulse-ec2-sg"
+    Name        = "${var.project_name}-sg"
+    Project     = var.project_name
+    Environment = var.environment
   }
 }
 
-# Create an EC2 instance with Docker, Vault, and the application
-resource "aws_instance" "cloudpulse_instance" {
-  count                       = terraform.workspace == "production" ? 1 : 0
-  ami                         = data.aws_ami.amazon_linux_2.id
-  instance_type               = "t3.micro"
-  subnet_id                   = aws_subnet.public[0].id
-  vpc_security_group_ids      = [aws_security_group.ec2_sg[0].id]
-  associate_public_ip_address = true
+# --- IAM Role and Policy for EC2 ---
+resource "aws_iam_role" "cloudpulse_ec2_role" {
+  name = "${var.project_name}-ec2-role-${var.environment}"
 
-  user_data = <<-EOF
-              #!/bin/bash
-              # Install Docker
-              yum update -y
-              amazon-linux-extras install docker -y
-              systemctl start docker
-              systemctl enable docker
-              usermod -a -G docker ec2-user
-
-              # Install Docker Compose
-              curl -L "https://github.com/docker/compose/releases/download/v2.20.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-              chmod +x /usr/local/bin/docker-compose
-
-              # Create directory for Docker Compose
-              mkdir -p /home/ec2-user/cloudpulse
-              cd /home/ec2-user/cloudpulse
-
-              # Create docker-compose.yml with Vault configuration mounted
-              cat << 'DOCKER_COMPOSE' > docker-compose.yml
-              version: '3.8'
-              services:
-                vault:
-                  image: hashicorp/vault:1.15
-                  ports:
-                    - "8200:8200"
-                  environment:
-                    - VAULT_ADDR=http://0.0.0.0:8200
-                  volumes:
-                    - vault-data:/vault/file
-                    - vault-logs:/var/log
-                    - /home/ec2-user/cloudpulse/vault-config:/vault/config  # Mount config directory
-                  cap_add:
-                    - IPC_LOCK
-                  command: server -config=/vault/config/vault.hcl  # Use the provided config file
-                app:
-                  image: ${aws_ecr_repository.cloudpulse.repository_url}:latest
-                  ports:
-                    - "8080:8080"
-                  environment:
-                    - STAGE=production
-                    - AWS_REGION=us-east-1
-                    - LOG_LEVEL=info
-                    - PORT=8080
-                    - VAULT_ADDR=http://vault:8200
-                    - VAULT_TOKEN=${var.vault_token}  # NOTE: This might not match the generated root token
-              volumes:
-                vault-data:
-                vault-logs:
-              DOCKER_COMPOSE
-
-              # Create Vault configuration file
-              mkdir -p /home/ec2-user/cloudpulse/vault-config
-              cat << 'VAULT_CONFIG' > vault-config/vault.hcl
-              ui = true
-
-              listener "tcp" {
-                address     = "0.0.0.0:8200"
-                tls_disable = true  # Consider enabling TLS in production
-              }
-
-              storage "file" {
-                path = "/vault/file"
-              }
-              VAULT_CONFIG
-
-              # Start containers
-              export VAULT_ADDR=http://127.0.0.1:8200
-              docker-compose up -d
-
-              # Initialize Vault
-              sleep 10  # Wait for Vault to start
-              docker-compose exec -T vault vault operator init > /home/ec2-user/vault-init.txt
-              VAULT_TOKEN=$(grep 'Initial Root Token' /home/ec2-user/vault-init.txt | awk '{print $4}')
-              echo "VAULT_TOKEN=$VAULT_TOKEN" >> /home/ec2-user/.bashrc
-
-              # Unseal Vault with the first three keys
-              for i in {1..3}; do
-                KEY=$(grep "Unseal Key $i" /home/ec2-user/vault-init.txt | awk '{print $4}')
-                docker-compose exec -T vault vault operator unseal $KEY
-              done
-
-              # Set up Vault secrets using the root token
-              docker-compose exec -T -e VAULT_TOKEN=$VAULT_TOKEN vault vault secrets enable -path=secret kv
-              echo "After Vault is running, add the secrets using the below commands:"
-              echo  "docker-compose exec -T -e VAULT_TOKEN=$VAULT_TOKEN vault vault kv put secret/cloudpulse/production/GITHUB_TOKEN value=${var.github_token}"
-              echo "docker-compose exec -T -e VAULT_TOKEN=$VAULT_TOKEN vault vault kv put secret/cloudpulse/production/AWS_ACCESS_KEY_ID value=${var.aws_access_key_id}"
-              echo "docker-compose exec -T -e VAULT_TOKEN=$VAULT_TOKEN vault vault kv put secret/cloudpulse/production/AWS_SECRET_ACCESS_KEY value=${var.aws_secret_access_key}"
-              EOF
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+      },
+    ]
+  })
 
   tags = {
-    Name = "cloudpulse-instance"
+    Name    = "${var.project_name}-ec2-role-${var.environment}"
+    Project = var.project_name
   }
 }
 
-# Data source for the latest Amazon Linux 2 AMI
+resource "aws_iam_policy" "cloudpulse_ec2_policy" {
+  name        = "${var.project_name}-ec2-policy-${var.environment}"
+  description = "Policy for CloudPulse EC2 to access CloudWatch and other necessary services."
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "cloudwatch:GetMetricData",
+          "cloudwatch:ListMetrics" // Useful for diagnostics
+          // Add other permissions if needed, e.g., for EC2 metadata service access (usually allowed by default)
+        ]
+        Effect   = "Allow"
+        Resource = "*" // CloudWatch actions often require '*' or specific metric ARNs
+      },
+      // Potentially add permissions for Systems Manager Session Manager if you prefer it over SSH
+      // {
+      //   "Effect": "Allow",
+      //   "Action": [
+      //       "ssm:UpdateInstanceInformation",
+      //       "ssmmessages:CreateControlChannel",
+      //       "ssmmessages:CreateDataChannel",
+      //       "ssmmessages:OpenControlChannel",
+      //       "ssmmessages:OpenDataChannel"
+      //   ],
+      //   "Resource": "*"
+      // }
+    ]
+  })
+
+  tags = {
+    Name    = "${var.project_name}-ec2-policy-${var.environment}"
+    Project = var.project_name
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "cloudpulse_ec2_policy_attach" {
+  role       = aws_iam_role.cloudpulse_ec2_role.name
+  policy_arn = aws_iam_policy.cloudpulse_ec2_policy.arn
+}
+
+resource "aws_iam_instance_profile" "cloudpulse_ec2_instance_profile" {
+  name = "${var.project_name}-ec2-profile-${var.environment}"
+  role = aws_iam_role.cloudpulse_ec2_role.name
+
+  tags = {
+    Name    = "${var.project_name}-ec2-profile-${var.environment}"
+    Project = var.project_name
+  }
+}
+
+# --- EC2 Instance ---
+# Find the latest Amazon Linux 2 AMI
 data "aws_ami" "amazon_linux_2" {
   most_recent = true
   owners      = ["amazon"]
@@ -220,13 +167,78 @@ data "aws_ami" "amazon_linux_2" {
     name   = "name"
     values = ["amzn2-ami-hvm-*-x86_64-gp2"]
   }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
 }
 
-# Output the public IP of the instance if in production
+resource "aws_instance" "cloudpulse_server" {
+  ami           = data.aws_ami.amazon_linux_2.id
+  instance_type = var.ec2_instance_type # Should be "t3.micro" for Free Tier
+
+  # Use one of the default subnets. For more control, specify a subnet_id.
+  # Ensure the chosen subnet is in an AZ that supports t3.micro.
+  subnet_id = data.aws_subnets.default.ids[0]
+
+  vpc_security_group_ids = [aws_security_group.cloudpulse_sg.id]
+  iam_instance_profile   = aws_iam_instance_profile.cloudpulse_ec2_instance_profile.name
+  key_name               = var.ec2_key_name # Name of your EC2 Key Pair for SSH
+
+  # User data to install Docker, Docker Compose and other utilities
+  user_data = <<-EOF
+              #!/bin/bash
+              sudo yum update -y
+              sudo amazon-linux-extras install docker -y
+              sudo systemctl start docker
+              sudo systemctl enable docker
+              sudo usermod -a -G docker ec2-user
+
+              # Install Docker Compose (latest version)
+              sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+              sudo chmod +x /usr/local/bin/docker-compose
+              
+              # Install Git (useful for pulling helper scripts or manual setup)
+              sudo yum install -y git
+
+              # You might want to install the Vault CLI for easier management from the EC2 instance itself
+              # sudo yum install -y yum-utils
+              # sudo yum-config-manager --add-repo https://rpm.releases.hashicorp.com/AmazonLinux/hashicorp.repo
+              # sudo yum -y install vault
+
+              echo "User data script completed." >> /tmp/user_data.log
+              EOF
+
+  tags = {
+    Name        = "${var.project_name}-server-${var.environment}"
+    Project     = var.project_name
+    Environment = var.environment
+  }
+
+  # Ensure root block device is within Free Tier (30GB of EBS general purpose (SSD) or magnetic storage)
+  root_block_device {
+    volume_size = var.ebs_volume_size # e.g., 20 GB, well within 30GB free tier
+    volume_type = "gp3"             # gp3 is often cheaper and better performing than gp2
+    delete_on_termination = true
+  }
+
+  # Enable detailed monitoring if desired, but basic monitoring is free.
+  # monitoring = false # Basic monitoring is free. Detailed costs extra.
+}
+
+# --- Outputs ---
 output "instance_public_ip" {
-  value = terraform.workspace == "production" ? aws_instance.cloudpulse_instance[0].public_ip : "N/A"
+  description = "Public IP address of the CloudPulse EC2 instance."
+  value       = aws_instance.cloudpulse_server.public_ip
 }
 
-# NOTE: The 'app' service in docker-compose.yml starts with VAULT_TOKEN set to var.vault_token, which may not match
-# the root token generated during Vault initialization. This could prevent the app from connecting to Vault initially.
-# Consider starting the app service after Vault initialization or adjusting the app to dynamically retrieve the token.
+output "instance_id" {
+  description = "ID of the CloudPulse EC2 instance."
+  value       = aws_instance.cloudpulse_server.id
+}
+
+output "security_group_id" {
+  description = "ID of the CloudPulse security group."
+  value       = aws_security_group.cloudpulse_sg.id
+}

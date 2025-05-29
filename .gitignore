@@ -21,6 +21,8 @@ docker-compose.yml
 /terraform/terraform.tfstate.backup
 /terraform/.terraform.lock.hcl
 /terraform/*.tfvars
+/terraform/tfplan
+
 
 # Node.js (optional, for frontend tooling)
 node_modules/

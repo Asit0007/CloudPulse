@@ -34,7 +34,7 @@ var (
 
 // initVault initializes the Vault client.
 func initVault() error {
-	conf := vault.DefaultConfig() // Reads VAULT_ADDR from env (e.g., http://127.0.0.1:8200)
+	conf := vault.DefaultConfig() // Reads VAULT_ADDR from env (e.g., http://127.0.0.1:8201)
 
 	var err error
 	vaultClient, err = vault.NewClient(conf)

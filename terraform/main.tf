@@ -67,12 +67,12 @@ resource "aws_security_group" "cloudpulse_sg" {
     # This rule is more for accessing Vault UI from your trusted IP.
   }
 
-    ingress {
-    description = "Vault cluster communications (port 8202) within the SG"
-    from_port       = 8202
-    to_port         = 8202
-    protocol        = "tcp"
-    security_groups = [aws_security_group.cloudpulse_sg.id]
+  ingress {
+    description = "Vault cluster comms (self)"
+    from_port   = 8202
+    to_port     = 8202
+    protocol    = "tcp"
+    self        = true
   }
 
 

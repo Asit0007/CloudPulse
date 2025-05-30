@@ -1,16 +1,68 @@
-<!-- offline.html: Fallback page for CloudPulse when offline -->
-
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
-    <title>CloudPulse Offline</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CloudPulse - Offline</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            background-color: #f0f2f5;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 90vh;
+            text-align: center;
+        }
+        .container {
+            background-color: #fff;
+            padding: 30px 40px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            max-width: 400px;
+        }
+        h1 {
+            color: #00527b;
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+        p {
+            font-size: 1.1rem;
+            color: #495057;
+            margin: 0.75rem 0;
+        }
+        .icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+        .maintenance {
+            margin-top: 1.5rem;
+            padding: 15px;
+            background: #fffae6;
+            border-left: 4px solid #ffc107;
+            color: #665c00;
+            border-radius: 4px;
+            font-weight: 500;
+        }
+    </style>
 </head>
-
 <body>
-    <h1>CloudPulse is Offline</h1>
-    <p>The dashboard will be live again at 12:00 AM UTC tomorrow.</p>
+    <div class="container">
+        <div class="icon">🔌</div>
+        <h1>CloudPulse is Offline</h1>
+        <p>It seems you're not connected to the internet, or the application server is currently unavailable.</p>
+        <p>Please check your network connection and try again later.</p>
+        <div class="maintenance">
+            <strong>Scheduled Maintenance:</strong><br>
+            Our servers will be down for maintenance daily between<br>
+            9:30 PM IST and 9:30 AM IST. We appreciate your patience.
+        </div>
+    </div>
 </body>
-
 </html>
+<!-- This HTML page is designed to inform users that the CloudPulse application is currently offline, either due to a lack of internet connection or scheduled maintenance. It provides a clear message and a friendly icon to enhance user experience. -->

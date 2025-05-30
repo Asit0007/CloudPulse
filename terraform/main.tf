@@ -58,13 +58,21 @@ resource "aws_security_group" "cloudpulse_sg" {
   # and potentially from your SSH IP for initial setup/management.
   ingress {
     description = "Allow Vault access from within EC2 and trusted SSH IP"
-    from_port   = 8200 
-    to_port     = 8200
+    from_port   = 8201
+    to_port     = 8201
     protocol    = "tcp"
     cidr_blocks = [var.ssh_access_cidr] # Your IP for management
     # self = true # This would allow traffic from instances within this SG.
     # For container-to-container on same host, Docker networking is used.
     # This rule is more for accessing Vault UI from your trusted IP.
+  }
+
+    ingress {
+    description = "Vault cluster communications (port 8202) within the SG"
+    from_port       = 8202
+    to_port         = 8202
+    protocol        = "tcp"
+    security_groups = [aws_security_group.cloudpulse_sg.id]
   }
 
 

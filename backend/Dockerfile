@@ -5,13 +5,13 @@ FROM golang:1.23-alpine AS builder
 WORKDIR /app
 
 # Copy go mod and sum files
-COPY go.mod go.sum ./
+COPY backend/go.mod backend/go.sum ./
 
 # Download all dependencies. Dependencies will be cached if the go.mod and go.sum files are not changed
 RUN go mod download && go mod verify
 
 # Copy the source code into the container
-COPY . .
+COPY backend/. .
 
 # Build the Go app.
 # CGO_ENABLED=0 to build a statically-linked binary (no external C dependencies)
@@ -31,7 +31,7 @@ WORKDIR /app
 COPY --from=builder /cloudpulse /cloudpulse
 
 # Copy the frontend static assets. The Go app will serve these.
-COPY ./frontend ./frontend
+COPY  frontend ./frontend
 # Ensure the frontend directory exists in the image if it's empty in the build context
 RUN mkdir -p ./frontend
 

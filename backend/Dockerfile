@@ -31,7 +31,7 @@ WORKDIR /app
 COPY --from=builder /cloudpulse /cloudpulse
 
 # Copy the frontend static assets. The Go app will serve these.
-COPY ./frontend ./frontend
+COPY ../frontend ./frontend
 # Ensure the frontend directory exists in the image if it's empty in the build context
 RUN mkdir -p ./frontend
 

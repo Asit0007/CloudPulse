@@ -65,8 +65,8 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
-          context: ./backend # Path to the Dockerfile and build context
-          file: ./backend/Dockerfile
+          context: . # Root of your repository
+          file: ./backend/Dockerfile # Path to the Dockerfile and build context
           push: true
           tags: ${{ env.DOCKER_IMAGE_NAME }}:latest
           # For ECR: tags: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest

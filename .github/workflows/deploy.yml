@@ -1,14 +1,122 @@
-# deploy.yml: GitHub Actions workflow for CloudPulse deployment
-name: Placeholder Deployment Workflow
+name: Deploy CloudPulse to EC2
 
 on:
   push:
     branches:
-      - main
+      - main # Or your deployment branch, e.g., 'release'
+
+env:
+  # Define environment variables used across jobs
+  # For Docker Hub:
+  DOCKER_IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/cloudpulse # Replace with your Docker Hub username
+  # For AWS ECR (Alternative - more complex for free tier, but better AWS integration):
+  # AWS_REGION: your-aws-region # e.g., us-east-1
+  # ECR_REPOSITORY: cloudpulse-backend
 
 jobs:
-  noop:
+  build-and-push-docker-image:
+    name: Build and Push Docker Image
     runs-on: ubuntu-latest
+
     steps:
-      - name: No Operation
-        run: echo "This is a placeholder workflow. No actions are performed."
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.21" # Match your go.mod version
+
+      - name: Build Go binary (optional, Dockerfile does this too)
+        working-directory: ./backend
+        run: CGO_ENABLED=0 GOOS=linux go build -v -o ./cloudpulse-server-binary .
+        # This step is mostly for verification; the Dockerfile will perform the final build.
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Alternative: Login to AWS ECR
+      # - name: Configure AWS credentials
+      #   uses: aws-actions/configure-aws-credentials@v4
+      #   with:
+      #     aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_FOR_ECR }}
+      #     aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_FOR_ECR }}
+      #     aws-region: ${{ env.AWS_REGION }}
+      # - name: Login to Amazon ECR
+      #   id: login-ecr
+      #   uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend # Path to the Dockerfile and build context
+          file: ./backend/Dockerfile
+          push: true
+          tags: ${{ env.DOCKER_IMAGE_NAME }}:latest
+          # For ECR: tags: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-to-ec2:
+    name: Deploy to EC2
+    needs: build-and-push-docker-image # Run this job after the image is built
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to EC2 instance
+        uses: appleboy/ssh-action@master # Popular action for SSH commands
+        with:
+          host: ${{ secrets.EC2_HOST_IP }} # Public IP of your EC2 instance
+          username: ${{ secrets.EC2_USERNAME }} # e.g., ec2-user for Amazon Linux
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }} # Your EC2 instance's private SSH key
+          port: 22
+          script: |
+            # Ensure script exits immediately if a command exits with a non-zero status
+            set -e 
+
+            echo "Starting deployment to EC2..."
+
+            # Pull the latest Docker image
+            sudo docker pull ${{ env.DOCKER_IMAGE_NAME }}:latest
+            # For ECR: sudo docker pull ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+
+            # Stop and remove the old container if it exists
+            if [ "$(sudo docker ps -q -f name=cloudpulse-app)" ]; then
+                echo "Stopping and removing existing cloudpulse-app container..."
+                sudo docker stop cloudpulse-app
+                sudo docker rm cloudpulse-app
+            else
+                echo "No existing cloudpulse-app container found."
+            fi
+
+            # Run the new container
+            # IMPORTANT: Pass necessary environment variables
+            # VAULT_TOKEN is highly sensitive. Consider more secure ways to manage it in production.
+            # For this free-tier setup, we pass it as a secret from GitHub Actions.
+            echo "Running new cloudpulse-app container..."
+            sudo docker run -d \
+              --name cloudpulse-app \
+              -p 80:8080 \
+              --restart unless-stopped \
+              -e PORT="8080" \
+              -e VAULT_ADDR="${{ secrets.VAULT_ADDR_ON_EC2 }}" \
+              -e VAULT_TOKEN="${{ secrets.VAULT_TOKEN_FOR_APP }}" \
+              -e GITHUB_OWNER="${{ secrets.GITHUB_OWNER }}" \
+              -e GITHUB_REPO="${{ secrets.GITHUB_REPO }}" \
+              -e AWS_REGION="${{ secrets.AWS_REGION }}" \
+              ${{ env.DOCKER_IMAGE_NAME }}:latest
+              # For ECR: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+
+            echo "Deployment complete. CloudPulse should be accessible on port 80."
+
+            # Optional: Clean up unused Docker images to save space
+            sudo docker image prune -a -f || true 
+            # The '|| true' ensures the workflow doesn't fail if prune has nothing to remove or encounters a minor issue.
+
+            echo "CloudPulse application deployed successfully!"

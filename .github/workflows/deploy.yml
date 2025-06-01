@@ -117,8 +117,8 @@ jobs:
               -e PORT="8080" \
               -e VAULT_ADDR="${{ secrets.VAULT_ADDR_ON_EC2 }}" \
               -e VAULT_TOKEN="${{ secrets.VAULT_TOKEN_FOR_APP }}" \
-              -e GITHUB_OWNER="${{ secrets.GITHUB_OWNER }}" \
-              -e GITHUB_REPO="${{ secrets.GITHUB_REPO }}" \
+              -e GITHUB_OWNER="${{ secrets.GIT_OWNER }}" \
+              -e GITHUB_REPO="${{ secrets.GIT_REPO }}" \
               -e AWS_REGION="${{ secrets.AWS_REGION }}" \
               ${{ env.DOCKER_IMAGE_NAME }}:latest
               # For ECR: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest

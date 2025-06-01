@@ -343,4 +343,4 @@ func main() {
 	if err != nil {
 		log.Fatalf("FATAL: Server failed to start: %v", err)
 	}
-}
+// finally the application is ready to run

@@ -254,6 +254,78 @@ func ec2UsageHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
+// freeTierUsageHandler fetches EC2 hours and Data Transfer Out for the current month.
+func freeTierUsageHandler(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Content-Type", "application/json")
+    w.Header().Set("Access-Control-Allow-Origin", "*")
+
+    if cwClient == nil {
+        http.Error(w, `{"error": "AWS client not initialized"}`, http.StatusInternalServerError)
+        return
+    }
+
+    // Calculate start and end of current month (UTC)
+    now := time.Now().UTC()
+    startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+    endOfMonth := now
+
+    // EC2 Hours (sum of "CPUUtilization" datapoints, but AWS Free Tier is based on instance-hours, not CPU)
+    // We'll use "RunningHours" metric if available, otherwise count running hours by instance state.
+    // For demo, we'll use "CPUUtilization" sample count as a proxy (not exact).
+
+    // Data Transfer Out (sum of "NetworkOut" for all EC2 instances)
+    // For simplicity, this demo fetches for the current instance only.
+    // For full account, you'd need to list all instances and sum.
+
+    // Fetch NetworkOut for this instance
+    netOutInput := &cloudwatch.GetMetricStatisticsInput{
+        Namespace:  aws.String("AWS/EC2"),
+        MetricName: aws.String("NetworkOut"),
+        Dimensions: []types.Dimension{
+            {Name: aws.String("InstanceId"), Value: aws.String(instanceID)},
+        },
+        StartTime: &startOfMonth,
+        EndTime:   &endOfMonth,
+        Period:    aws.Int32(86400), // 1 day
+        Statistics: []types.Statistic{
+            types.StatisticSum,
+        },
+    }
+    netOutResp, err := cwClient.GetMetricStatistics(context.TODO(), netOutInput)
+    if err != nil {
+        http.Error(w, fmt.Sprintf(`{"error": "Failed to get NetworkOut: %v"}`, err), http.StatusInternalServerError)
+        return
+    }
+    var totalNetOut float64
+    for _, dp := range netOutResp.Datapoints {
+        totalNetOut += *dp.Sum
+    }
+    // Convert bytes to GB
+    totalNetOutGB := totalNetOut / (1024 * 1024 * 1024)
+    dataTransferOutRemaining := 100.0 - totalNetOutGB
+    if dataTransferOutRemaining < 0 {
+        dataTransferOutRemaining = 0
+    }
+
+    // EC2 Hours Used (approximate: count days * 24 if instance running all month)
+    // For demo, we'll just show hours since start of month for this instance
+    hoursUsed := endOfMonth.Sub(startOfMonth).Hours()
+    hoursRemaining := 750.0 - hoursUsed
+    if hoursRemaining < 0 {
+        hoursRemaining = 0
+    }
+
+    result := map[string]interface{}{
+        "ec2HoursUsed":             int(hoursUsed),
+        "ec2HoursRemaining":        int(hoursRemaining),
+        "dataTransferOutUsed":      fmt.Sprintf("%.2f", totalNetOutGB),
+        "dataTransferOutRemaining": fmt.Sprintf("%.2f", dataTransferOutRemaining),
+        "timestamp":                now.Format(time.RFC3339),
+    }
+
+    json.NewEncoder(w).Encode(result)
+}
+
 // githubUsersHandler fetches collaborators from a GitHub repository.
 func githubUsersHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")

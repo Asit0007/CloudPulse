@@ -123,7 +123,16 @@ resource "aws_iam_policy" "cloudpulse_ec2_policy" {
       {
         Action = [
           "cloudwatch:GetMetricData",
-          "cloudwatch:ListMetrics" // Useful for diagnostics
+          "cloudwatch:GetMetricStatistics",
+          "cloudwatch:ListMetrics",
+          "cloudwatch:PutMetricData",
+          "ec2:DescribeTags",
+          "ec2:DescribeInstances",
+          "logs:PutLogEvents",
+          "logs:DescribeLogStreams",
+          "logs:DescribeLogGroups",
+          "logs:CreateLogStream",
+          "logs:CreateLogGroup" 
           // Add other permissions if needed, e.g., for EC2 metadata service access (usually allowed by default)
         ]
         Effect   = "Allow"

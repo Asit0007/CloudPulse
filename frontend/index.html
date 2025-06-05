@@ -5,53 +5,75 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CloudPulse - AWS Free Tier Dashboard</title>
     <link rel="stylesheet" href="styles.css">
+    <link rel="preload" href="script.js" as="script">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>☁️</text></svg>">
 </head>
 <body>
     <header>
         <h1>☁️ CloudPulse Dashboard</h1>
-        <p>Your AWS Free Tier Monitoring Hub</p>
+        <p>Real-time insights into your AWS Free Tier usage and GitHub project.</p>
     </header>
 
     <main class="dashboard-grid">
         <section class="card" id="ec2-card">
-            <h2>EC2 Instance Usage (<span id="ec2-instance-id">loading...</span>)</h2>
+            <h2>EC2 Resource Usage (<span id="ec2-instance-id">loading...</span>)</h2>
             <div id="ec2-data-container">
-                <p class="loading-text">Loading EC2 data...</p>
-                </div>
+                <p><strong>CPU Utilization:</strong> <span id="ec2-cpu">Loading...</span></p>
+                <p><strong>Memory Usage:</strong> <span id="ec2-memory">Loading...</span></p> 
+                <p><strong>Disk Usage:</strong> <span id="ec2-disk">Loading...</span></p> 
+                <p><strong>Network In:</strong> <span id="ec2-net-in">Loading...</span></p>
+                <p><strong>Network Out:</strong> <span id="ec2-net-out">Loading...</span></p>
+            </div>
+            <p class="last-updated">Last Updated: <span id="ec2-last-updated">Never</span></p>
             <small>Metrics from AWS CloudWatch (Basic - Free Tier). Last 5-10 min.</small>
         </section>
 
         <section class="card" id="free-tier-card">
-            <h2>AWS Free Tier Status</h2>
+            <h2>AWS Free Tier Usage</h2>
             <div id="free-tier-data">
-                <p><strong>Important:</strong> Programmatic Free Tier usage tracking can incur costs. Rely on AWS Budgets (free for 2 budgets) for alerts and manual checks in the AWS Console.</p>
+                
+                <p><strong>EC2 Hours Used:</strong> <span id="ft-ec2-hours-used">Loading...</span> / 750 hours</p>
+                <p><strong>EC2 Hours Remaining:</strong> <span id="ft-ec2-hours-remaining">Loading...</span></p>
+                <p><strong>Data Transfer Out Used:</strong> <span id="ft-data-transfer-out-used">Loading...</span> / 100 GB</p>
+                <p><strong>Data Transfer Out Remaining:</strong> <span id="ft-data-transfer-out-remaining">Loading...</span></p>
+                <p class="note">Note: Data reflects current month's usage. Exceeding limits incurs charges.</p>
                 <ul>
-                    <li>EC2 Hours (Goal: &lt; 750/mo for t3.micro): <span id="ec2-hours-status" class="status-manual">Check Manually</span></li>
-                    <li>Data Transfer Out (Goal: &lt; 100GB/mo total): <span id="data-transfer-status" class="status-manual">Check Manually</span></li>
-                    <li>S3 Storage (Goal: &lt; 5GB Standard): <span id="s3-storage-status" class="status-manual">Check Manually</span></li>
+                    <li>EC2 Hours (Goal: &lt; 750/mo for t3.micro): <span id="ec2-hours-status" class="status-manual">Check Carefully</span></li>
+                    <li>Data Transfer Out (Goal: &lt; 100GB/mo total): <span id="data-transfer-status" class="status-manual">Check Carefully</span></li>
+                    <li>S3 Storage (Goal: &lt; 5GB Standard): <span id="s3-storage-status" class="status-manual">Check Carefully</span></li>
                 </ul>
+
                 <div class="button-group">
                     <a href="https://console.aws.amazon.com/billing/home#/budgets" target="_blank" rel="noopener noreferrer" class="button">Set Up AWS Budgets</a>
                     <a href="https://console.aws.amazon.com/billing/home#/freetier" target="_blank" rel="noopener noreferrer" class="button">View Free Tier Usage</a>
                 </div>
             </div>
-             <small>Set up free AWS Budgets to get alerted before exceeding limits!</small>
+            <p class="last-updated">Last Updated: <span id="ft-last-updated">Never</span></p>
+            <small>Set up free AWS Budgets to get alerted before exceeding limits!</small>
         </section>
 
         <section class="card" id="github-card">
-            <h2>GitHub Repo Access</h2>
+            <h2>GitHub Repo Users (<span id="github-repo-name">Loading...</span>)</h2>
             <div id="github-data-container">
-                <p class="loading-text">Loading GitHub users...</p>
-                </div>
+                <ul id="github-users-list">
+                    <li class="loading-text">Loading users...</li>
+                </ul>
+            </div>
+            <p class="last-updated">Last Updated: <span id="github-last-updated">Never</span></p>
             <small>Users with access to your repository. Fetched via GitHub API.</small>
         </section>
     </main>
 
     <footer>
-        <p>CloudPulse - Stay Free, Stay Informed. Last updated: <span id="last-updated">Never</span></p>
+        <p id="footer-text"></p>
+
+        <script>
+            document.getElementById("footer-text").innerHTML =
+                `&copy; ${new Date().getFullYear()} CloudPulse. Stay Free, Stay Informed. Powered by AWS Free Tier.`;
+        </script>
     </footer>
 
-    <script src="script.js"></script>
+
+    <script src="script.js" defer></script>
 </body>
 </html>

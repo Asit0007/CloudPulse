@@ -397,13 +397,14 @@ func main() {
 
 	http.HandleFunc("/api/ec2-usage", ec2UsageHandler)
 	http.HandleFunc("/api/github-users", githubUsersHandler)
-	http.HandleFunc("/api/free-tier-usage", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/api/free-tier-usage", freeTierUsageHandler)
+	/*http.HandleFunc("/api/free-tier-usage", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		json.NewEncoder(w).Encode(map[string]string{
 			"message": "Monitor AWS Free Tier usage via AWS Budgets and the Billing Console.",
 		})
-	})
+	})*/
 
 	port := os.Getenv("PORT")
 	if port == "" {

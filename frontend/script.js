@@ -123,6 +123,28 @@ async function fetchEC2Usage() {
 }
 
 /**
+ * Fetches and displays AWS Free Tier usage data.
+ */
+async function fetchFreeTierUsage() {
+    try {
+        const data = await fetchData('/api/free-tier-usage');
+        setText('ft-ec2-hours-used', data.ec2HoursUsed !== undefined ? data.ec2HoursUsed : 'N/A');
+        setText('ft-ec2-hours-remaining', data.ec2HoursRemaining !== undefined ? data.ec2HoursRemaining : 'N/A');
+        setText('ft-data-transfer-out-used', data.dataTransferOutUsed !== undefined ? `${data.dataTransferOutUsed} GB` : 'N/A');
+        setText('ft-data-transfer-out-remaining', data.dataTransferOutRemaining !== undefined ? `${data.dataTransferOutRemaining} GB` : 'N/A');
+        updateTimestamp('ft-last-updated');
+    } catch (error) {
+        setText('ft-ec2-hours-used', 'Error');
+        setText('ft-ec2-hours-remaining', 'Error');
+        setText('ft-data-transfer-out-used', 'Error');
+        setText('ft-data-transfer-out-remaining', 'Error');
+        document.getElementById('ft-last-updated').textContent = 'Error';
+        console.error("Failed to fetch Free Tier usage:", error);
+    }
+}
+
+
+/**
  * Updates the Free Tier section (static info, no API call).
  */
 function updateFreeTierInfo() {
@@ -182,7 +204,8 @@ async function fetchGitHubUsers() {
 function fetchAllData() {
     console.log("Fetching all dashboard data...");
     fetchEC2Usage();
-    updateFreeTierInfo(); // This is static, just updates placeholders
+    fetchFreeTierUsage(); // Now fetches from API
+    //updateFreeTierInfo(); // This is static, just updates placeholders
     fetchGitHubUsers();
 }
 

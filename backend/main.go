@@ -180,7 +180,7 @@ func ec2UsageHandler(w http.ResponseWriter, r *http.Request) {
 	startTime := endTime.Add(-10 * time.Minute)
 
 	metricQueries := []types.MetricDataQuery{
-		{
+		{//for CPU Utilization
 			Id: aws.String("cpu"), // <-- Use aws.String
 			MetricStat: &types.MetricStat{
 				Metric: &types.Metric{
@@ -193,7 +193,39 @@ func ec2UsageHandler(w http.ResponseWriter, r *http.Request) {
 			},
 			ReturnData: aws.Bool(true), // <-- Use aws.Bool
 		},
-		{
+		{//for Memory Utilization
+			Id: aws.String("memUsed"),
+			MetricStat: &types.MetricStat{
+				Metric: &types.Metric{
+					Namespace:  aws.String("CWAgent"),
+					MetricName: aws.String("mem_used_percent"),
+					Dimensions: []types.Dimension{
+						{Name: aws.String("InstanceId"), Value: aws.String(instanceID)},
+					},
+				},
+				Period: aws.Int32(300),
+				Stat:   aws.String("Average"),
+			},
+			ReturnData: aws.Bool(true),
+		},
+		{//for Disk Utilization
+			Id: aws.String("diskUsed"),
+			MetricStat: &types.MetricStat{
+				Metric: &types.Metric{
+					Namespace:  aws.String("CWAgent"),
+					MetricName: aws.String("disk_used_percent"),
+					Dimensions: []types.Dimension{
+						{Name: aws.String("InstanceId"), Value: aws.String(instanceID)},
+						{Name: aws.String("path"), Value: aws.String("/")}, // root disk
+						{Name: aws.String("fstype"), Value: aws.String("xfs")}, // or "ext4" depending on your AMI
+					},
+				},
+				Period: aws.Int32(300),
+				Stat:   aws.String("Average"),
+			},
+			ReturnData: aws.Bool(true),
+		},
+		{//for Network In
 			Id: aws.String("netIn"), // <-- Use aws.String
 			MetricStat: &types.MetricStat{
 				Metric: &types.Metric{
@@ -206,7 +238,7 @@ func ec2UsageHandler(w http.ResponseWriter, r *http.Request) {
 			},
 			ReturnData: aws.Bool(true), // <-- Use aws.Bool
 		},
-		{
+		{//for Network Out
 			Id: aws.String("netOut"), // <-- Use aws.String
 			MetricStat: &types.MetricStat{
 				Metric: &types.Metric{

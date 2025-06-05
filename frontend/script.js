@@ -94,8 +94,8 @@ async function fetchEC2Usage() {
         setText('ec2-net-out', data.netOut !== 'N/A' && data.netOut !== undefined ? `${parseFloat(data.netOut).toLocaleString()} bytes` : 'N/A');
         
         // Memory and Disk are not provided by basic CloudWatch metrics via our current backend
-        setText('ec2-memory', 'N/A (Agent Req.)');
-        setText('ec2-disk', 'N/A (Agent Req.)');
+        setText('ec2-memory', data.memUsed !== 'N/A' && data.memUsed !== undefined ? `${parseFloat(data.memUsed).toFixed(2)}%` : 'N/A');
+        setText('ec2-disk', data.diskUsed !== 'N/A' && data.diskUsed !== undefined ? `${parseFloat(data.diskUsed).toFixed(2)}%` : 'N/A');
         
         if (data.message) { // Display any informational messages from backend
             const container = document.getElementById('ec2-data-container');

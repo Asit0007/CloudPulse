@@ -216,7 +216,7 @@ func ec2UsageHandler(w http.ResponseWriter, r *http.Request) {
 					MetricName: aws.String("disk_used_percent"),
 					Dimensions: []types.Dimension{
 						{Name: aws.String("device"), Value: aws.String("nvme0n1p1")},
-						{Name: aws.String("path"), Value: aws.String("/")}, // root disk
+						//{Name: aws.String("path"), Value: aws.String("/")}, // root disk
 						//{Name: aws.String("fstype"), Value: aws.String("xfs")}, // or "ext4" depending on your AMI
 					},
 				},

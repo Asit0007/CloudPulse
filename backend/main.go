@@ -208,25 +208,27 @@ func ec2UsageHandler(w http.ResponseWriter, r *http.Request) {
 			},
 			ReturnData: aws.Bool(true),
 		},
-		{//for Disk Utilization
-			Id: aws.String("diskUsed"),
-			MetricStat: &types.MetricStat{
-				Metric: &types.Metric{
-					Namespace:  aws.String("CWAgent"),
-					MetricName: aws.String("disk_used_percent"),
-					Dimensions: []types.Dimension{
-						{Name: aws.String("InstanceId"), Value: aws.String(instanceID)},
-						{Name: aws.String("path"), Value: aws.String("/")}, // root disk
-						//{Name: aws.String("device"), Value: aws.String("nvme0n1p1")},
-						//{Name: aws.String("path"), Value: aws.String("/")}, // root disk
-						//{Name: aws.String("fstype"), Value: aws.String("xfs")}, // or "ext4" depending on your AMI
+		
+		/*	{//for Disk Utilization
+				Id: aws.String("diskUsed"),
+				MetricStat: &types.MetricStat{
+					Metric: &types.Metric{
+						Namespace:  aws.String("CWAgent"),
+						MetricName: aws.String("disk_used_percent"),
+						Dimensions: []types.Dimension{
+							//{Name: aws.String("InstanceId"), Value: aws.String(instanceID)},
+							//{Name: aws.String("path"), Value: aws.String("/")}, // root disk
+							//{Name: aws.String("device"), Value: aws.String("nvme0n1p1")},
+							//{Name: aws.String("path"), Value: aws.String("/")}, // root disk
+							//{Name: aws.String("fstype"), Value: aws.String("xfs")}, // or "ext4" depending on your AMI
+						},
 					},
+					Period: aws.Int32(300),
+					Stat:   aws.String("Average"),
 				},
-				Period: aws.Int32(300),
-				Stat:   aws.String("Average"),
-			},
-			ReturnData: aws.Bool(true),
-		},
+				ReturnData: aws.Bool(true),
+			},*/
+
 		{//for Network In
 			Id: aws.String("netIn"), // <-- Use aws.String
 			MetricStat: &types.MetricStat{

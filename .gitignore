@@ -3,6 +3,11 @@ create_gitignore.sh
 update_readme.sh
 SetUpVaultSecrets.sh
 
+# Not necessary for the project
+/vault
+/monitoring
+
+
 # Go dependencies and build artifacts
 /backend/*.exe
 /backend/main

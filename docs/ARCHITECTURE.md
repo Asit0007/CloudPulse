@@ -2,7 +2,7 @@
 
 ## Overview
 
-CloudPulse’s architecture is designed for simplicity and quick deployment using AWS ECS, Docker, and Terraform.  
+CloudPulse’s architecture is designed for simplicity and quick deployment using AWS EC2 Instance, Docker, and Terraform.  
 Below is the architectural diagram (with official logos) and a description of each component.
 
 ![CloudPulse Architecture](assets/cloudpulse-architecture.svg)
@@ -13,11 +13,11 @@ Below is the architectural diagram (with official logos) and a description of ea
 
 - **User Browser**: Users access the dashboard via HTTP.
 - **Frontend (HTML/CSS/JS)**: The web dashboard, served by the Go backend.
-- **Go Backend (API server)**: Provides dashboard data, fetches AWS resource usage and GitHub contributor stats.
+- **Go Backend (API server)**: Provides dashboard data, fetches AWS resource usage, and GitHub contributor stats.
 - **Docker**: Used to containerize the Go backend and frontend.
 - **GitHub API**: Backend fetches contributor data using a Personal Access Token.
-- **AWS ECS (Elastic Container Service)**: Runs the Docker container in the cloud.
-- **AWS ECR (Elastic Container Registry)**: Stores Docker images.
+- **AWS EC2 Instance**: Runs the Docker container in the cloud.
+- **Docker Hub**: Stores Docker images.
 - **AWS IAM**: Manages credentials and permissions for resource access.
 - **Terraform**: Automates all AWS infrastructure provisioning.
 
@@ -25,17 +25,17 @@ Below is the architectural diagram (with official logos) and a description of ea
 
 ## Data Flow
 
-1. User requests dashboard in a browser.
+1. User requests the dashboard in a browser.
 2. Served by Go backend (containerized).
 3. Backend fetches AWS usage (via AWS SDK with IAM credentials) and GitHub contributor data (via GitHub API).
-4. Deployment and infra managed by Terraform; app is hosted on ECS, images pulled from ECR.
+4. Deployment and infrastructure managed by Terraform; app is hosted on an EC2 Instance, images pulled from Docker hub.
 
 ---
 
 ## Security and Secrets
 
 - All secrets (GitHub PAT, AWS credentials) are handled via environment variables or GitHub Secrets.
-- IAM policies are set for least privilege required by ECS tasks.
+- IAM policies are set for the least privilege.
 
 ---
 

@@ -37,7 +37,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for more details.
 **Tech stack:** Go (backend), HTML/CSS/JS (frontend), Docker, Terraform, AWS, GitHub Actions
 
 <p align="center">
-  <img src="docs/assets/Cloudpulse_SS.png" alt="CloudPulse Dashboard Screenshot" width="640"/>
+  <img src="docs/assets/Cloudpulse_SS.png" alt="CloudPulse Dashboard Screenshot" style="max-width: 100%; height: auto;"/>
   <br>
   <i>CloudPulse Dashboard - Real usage, real contributors, real simple.</i>
 </p>

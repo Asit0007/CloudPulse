@@ -4,8 +4,11 @@ update_readme.sh
 SetUpVaultSecrets.sh
 
 # Not necessary for the project
-/vault
-/monitoring
+/vault/vault-config.hcl
+/vault/
+/monitoring/prometheus.yml
+/monitoring/
+
 
 
 # Go dependencies and build artifacts

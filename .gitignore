@@ -57,3 +57,75 @@ AWSCLIV2.pkg
 *.cache
 *.bak
 *.backup
+
+# ============================================================
+# CRITICAL: Secrets and Sensitive Files — NEVER commit these
+# ============================================================
+SetUpVaultSecrets.sh
+vault-config.hcl
+*.pem
+*.key
+.env
+.env.*
+awscliv2.zip
+AWSCLIV2.pkg
+.aws/
+
+# ============================================================
+# Terraform — state files contain resource IDs & may have secrets
+# ============================================================
+terraform/.terraform/
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/.terraform.lock.hcl
+terraform/*.tfvars
+terraform/tfplan
+tfplan
+*.tfstate
+*.tfstate.backup
+
+# ============================================================
+# Go
+# ============================================================
+/backend/go.sum
+/backend/*.exe
+/backend/main
+/backend/tmp/
+/vendor/
+/backend/cloudpulse        # compiled binary
+
+# ============================================================
+# Docker
+# ============================================================
+*.dockerignore
+docker-compose.yml
+*.tar.gz
+
+# ============================================================
+# Node.js (optional frontend tooling)
+# ============================================================
+node_modules/
+npm-debug.log
+package-lock.json
+
+# ============================================================
+# Bash setup scripts (not needed in repo)
+# ============================================================
+setup_cloudpulse_structure.sh
+install_dependencies.sh
+create_gitignore.sh
+update_readme.sh
+
+# ============================================================
+# System and editor files
+# ============================================================
+.DS_Store
+*.swp
+*.swo
+.vscode/
+.idea/
+*.log
+*.tmp
+*.cache
+*.bak
+*.backup

@@ -1,9 +1,18 @@
 name: Deploy CloudPulse to EC2
 
+# DISABLED 2026-08-19: the AWS infrastructure this pipeline targets (EC2 instance,
+# security group, IAM role/instance profile) has been decommissioned. With no host at
+# EC2_HOST_IP, the deploy-to-ec2 job fails at the SSH step and turns the README badge red.
+#
+# To re-enable: re-provision with `terraform apply`, refresh the EC2_HOST_IP secret (the
+# instance has no Elastic IP, so the address changes on every stop/start), re-initialise
+# and unseal Vault on the new host, mint a fresh VAULT_TOKEN_FOR_APP, then restore the
+# `push:` trigger below.
 on:
-  push:
-    branches:
-      - main # Or your deployment branch, e.g., 'release'
+  workflow_dispatch: # manual-only while the infrastructure is torn down
+  # push:
+  #   branches:
+  #     - main
 
 env:
   # Define environment variables used across jobs

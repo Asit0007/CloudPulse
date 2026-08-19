@@ -92,7 +92,8 @@ tfplan
 /backend/main
 /backend/tmp/
 /vendor/
-/backend/cloudpulse        # compiled binary
+# compiled binary (stale build artifact)
+/backend/cloudpulse
 
 # ============================================================
 # Docker
@@ -129,3 +130,7 @@ update_readme.sh
 *.cache
 *.bak
 *.backup
+# ============================================================
+# AI assistant context file (local reference, not for the repo)
+# ============================================================
+claude.md

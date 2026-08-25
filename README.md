@@ -5,7 +5,7 @@
   <i>A full DevOps project — from local development to cloud deployment with IaC, runtime secrets management, and CI/CD.</i>
   <br><br>
   <a href="https://github.com/Asit0007/CloudPulse/actions/workflows/deploy.yml">
-    <img src="https://github.com/Asit0007/CloudPulse/actions/workflows/deploy.yml/badge.svg" alt="CI/CD Status" />
+    <img src="https://img.shields.io/badge/CI%2FCD-manual%20dispatch-lightgrey?logo=githubactions&logoColor=white" alt="CI/CD: manual dispatch" />
   </a>
   <a href="https://github.com/Asit0007/CloudPulse/blob/main/LICENSE">
     <img src="https://img.shields.io/github/license/Asit0007/CloudPulse?color=blue" alt="License" />
@@ -21,7 +21,9 @@
 
 ---
 
-> **Deployment status:** the AWS infrastructure for this project was **decommissioned on 2026-08-19** to keep the account at $0. The deploy workflow is therefore `workflow_dispatch`-only — the `push: main` trigger is commented out in [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) so it does not fail against a host that no longer exists. Everything below still describes how to stand it back up, and the app runs locally as documented.
+> **Deployment status:** the AWS infrastructure for this project was **decommissioned on 2026-08-19** to keep the account at $0. The deploy workflow is therefore `workflow_dispatch`-only — the `push: main` trigger is commented out in [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) so it does not fail against a host that no longer exists.
+>
+> The CI badge above is static for the same reason. The image build job still passes; it was the `deploy-to-ec2` SSH step that failed once the host went away, and with no further runs the live badge would read `failing` indefinitely and misrepresent the state of the code. Everything below describes how to stand the deployment back up, and the app runs locally as documented.
 
 ---
 
@@ -363,6 +365,7 @@ Improvements worth making, roughly in value-per-effort order:
 - Add `ReadTimeout` / `WriteTimeout` / `IdleTimeout` via an explicit `&http.Server{}` — a few lines that close a real DoS vector.
 - Add a `GET /healthz` endpoint — a prerequisite for any load balancer or real monitoring.
 - Allocate an Elastic IP to stop the recurring stale-address breakage.
+- Narrow the IAM policy to the two CloudWatch read actions the code actually calls (`GetMetricData`, `GetMetricStatistics`) — it currently grants eleven actions on `Resource = "*"`, including write access.
 - Switch to the **Vault AWS auth method** so the app authenticates with its IAM instance profile instead of a static long-lived token.
 - Migrate Terraform state to S3 with DynamoDB locking.
 - Add real Prometheus instrumentation (`promhttp` on `/metrics`) so `monitoring/prometheus.yml` describes something real.

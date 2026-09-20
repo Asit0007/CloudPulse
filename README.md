@@ -253,8 +253,16 @@ Open [http://localhost:8080](http://localhost:8080)
 | `AWS_REGION`               |    ✅    | —       | Consumed by the AWS SDK default config chain                      |
 | `PORT`                     |    ❌    | `8080`  | Listen port                                                       |
 | `EC2_INSTANCE_ID_OVERRIDE` |    ❌    | `""`    | **Required for local dev** — without it, off-EC2 runs return `503` from `/api/ec2-usage` |
+| `CORS_ALLOW_ORIGIN`        |    ❌    | `""`    | Unset means **no** `Access-Control-Allow-Origin` header at all. Only needed if `frontend/` is ever hosted apart from the API |
 
 Secrets never come from environment variables: the GitHub PAT is read from Vault at boot, and AWS credentials resolve through the SDK credential chain.
+
+> **On the two API endpoints' posture.** `/api/*` is unauthenticated — anyone who can reach the listener can read this deployment's CloudWatch and Cost Explorer figures. That is a deliberate choice for a dashboard whose whole point is being a public build-log, but it means two things had to change:
+>
+> - **Errors are no longer echoed to the caller.** AWS SDK errors are not generic — an authorization failure reads `User: arn:aws:iam::<account>:user/<name> is not authorized to perform cloudwatch:GetMetricData`, which hands an anonymous caller the account ID, the IAM principal and the missing permission. The full error goes to the log; the response says which stage failed and nothing more.
+> - **CORS is off by default.** It used to send `Access-Control-Allow-Origin: *` unconditionally, which let any page on the internet read those figures out of a visitor's browser. The binary serves `frontend/` and the API from one origin, so nothing legitimate needed it.
+>
+> If this is ever redeployed, put it behind something that authenticates callers and do not reopen port 8200 to `0.0.0.0/0` — see *Network posture of the decommissioned deployment* in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ---
 

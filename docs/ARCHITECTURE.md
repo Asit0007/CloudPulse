@@ -61,6 +61,33 @@ Below is the architectural diagram (with official logos) and a description of ea
 - `VAULT_TOKEN` is passed to the container as a plain environment variable, so anyone with
   shell access to the host can read it via `docker inspect`. Migrating to the Vault AWS
   auth method would remove this static token entirely.
+- **`/api/*` is unauthenticated.** Anyone who can reach the listener reads this
+  deployment's CloudWatch and Cost Explorer figures. Deliberate for a public build-log
+  dashboard, but it is why handler errors are no longer echoed to the caller: an AWS
+  authorization failure spells out the account ID, the IAM principal and the missing
+  permission. `apiError` in `backend/main.go` logs the real error and returns only the
+  stage name. CORS is likewise off unless `CORS_ALLOW_ORIGIN` is set — it used to be `*`
+  unconditionally, which let any page on the internet read those figures out of a
+  visitor's browser.
+
+### Network posture of the decommissioned deployment
+
+The AWS infrastructure was torn down on 2026-08-19. Recording what it looked like,
+because the Terraform that built it is still in this repository's history and should not
+be re-applied as written:
+
+- The EC2 security group opened **22, 8080 and 8200 to `0.0.0.0/0`**.
+- `vault/vault-config.hcl` ran the Vault listener on `0.0.0.0:8200` with
+  **`tls_disable = true`** and `storage "inmem"`. Combined with the security group, that
+  is an unauthenticated-at-the-network-edge secret store reachable over plaintext HTTP
+  from anywhere, holding the GitHub PAT.
+- `terraform.tfstate` for the production workspace was committed (later removed, still
+  reachable in history), publishing the AWS account ID, VPC/subnet/SG/instance IDs and
+  the public IP.
+
+If this is ever redeployed: scope 22 to a known address or drop it for SSM, keep 8200
+off the internet entirely, terminate TLS in front of 8080, and add
+`*.tfstate`/`tfplan` to `.gitignore` **before** the first `terraform apply`.
 
 ---
 

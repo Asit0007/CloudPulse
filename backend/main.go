@@ -162,9 +162,44 @@ func initGitHub() error {
 // --- API Handlers ---
 
 // ec2UsageHandler fetches basic CloudWatch metrics.
+// corsOrigin is whatever CORS_ALLOW_ORIGIN is set to, read once at startup.
+//
+// These three endpoints used to send Access-Control-Allow-Origin: * unconditionally,
+// which let any page on the internet read this deployment's AWS billing and
+// CloudWatch figures from a visitor's browser. Nothing needs that: the Go binary
+// serves frontend/ and the API from the same origin, so the dashboard is a
+// same-origin caller and sends no Origin header worth answering. Set
+// CORS_ALLOW_ORIGIN to a specific origin if the front end is ever hosted apart
+// from the API. "*" still works, and still means what it says.
+var corsOrigin = os.Getenv("CORS_ALLOW_ORIGIN")
+
+// setCORS is a no-op unless CORS_ALLOW_ORIGIN is set. Vary matters even then:
+// without it a shared cache can serve one origin's allowed response to another.
+func setCORS(w http.ResponseWriter) {
+	if corsOrigin == "" {
+		return
+	}
+	w.Header().Set("Access-Control-Allow-Origin", corsOrigin)
+	w.Header().Set("Vary", "Origin")
+}
+
+// apiError logs the real error and tells the caller only that the stage failed.
+//
+// These endpoints are unauthenticated and CORS is wide open, so whatever goes
+// into http.Error is readable by anyone who can reach the box. AWS and GitHub
+// SDK errors are not generic: an authorization failure reads "User:
+// arn:aws:iam::<account>:user/<name> is not authorized to perform
+// cloudwatch:GetMetricData", which hands an anonymous caller the account ID, the
+// IAM principal and the exact permission that is missing. The operator needs
+// that text; the internet does not, and it is already in the log.
+func apiError(w http.ResponseWriter, stage string, err error) {
+	log.Printf("%s: %v", stage, err)
+	http.Error(w, fmt.Sprintf(`{"error": %q}`, stage+" failed"), http.StatusInternalServerError)
+}
+
 func ec2UsageHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	setCORS(w)
 
 	if cwClient == nil {
 		http.Error(w, `{"error": "AWS client not initialized"}`, http.StatusInternalServerError)
@@ -265,8 +300,7 @@ func ec2UsageHandler(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
-		log.Printf("Error getting CloudWatch data: %v", err)
-		http.Error(w, fmt.Sprintf(`{"error": "Error getting CloudWatch data: %v"}`, err), http.StatusInternalServerError)
+		apiError(w, "Error getting CloudWatch data", err)
 		return
 	}
 
@@ -293,7 +327,7 @@ func ec2UsageHandler(w http.ResponseWriter, r *http.Request) {
 // freeTierUsageHandler fetches EC2 hours and Data Transfer Out for the current month.
 func freeTierUsageHandler(w http.ResponseWriter, r *http.Request) {
     w.Header().Set("Content-Type", "application/json")
-    w.Header().Set("Access-Control-Allow-Origin", "*")
+    setCORS(w)
 
     if cwClient == nil {
         http.Error(w, `{"error": "AWS client not initialized"}`, http.StatusInternalServerError)
@@ -329,7 +363,7 @@ func freeTierUsageHandler(w http.ResponseWriter, r *http.Request) {
     }
     netOutResp, err := cwClient.GetMetricStatistics(context.TODO(), netOutInput)
     if err != nil {
-        http.Error(w, fmt.Sprintf(`{"error": "Failed to get NetworkOut: %v"}`, err), http.StatusInternalServerError)
+        apiError(w, "Failed to get NetworkOut", err)
         return
     }
     var totalNetOut float64
@@ -365,7 +399,7 @@ func freeTierUsageHandler(w http.ResponseWriter, r *http.Request) {
 // githubUsersHandler fetches collaborators from a GitHub repository.
 func githubUsersHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	setCORS(w)
 
 	if githubClient == nil {
 		http.Error(w, `{"error": "GitHub client not initialized"}`, http.StatusInternalServerError)
@@ -380,8 +414,7 @@ func githubUsersHandler(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if err != nil {
-		log.Printf("Error getting GitHub users: %v", err)
-		http.Error(w, fmt.Sprintf(`{"error": "Error getting GitHub users: %v"}`, err), http.StatusInternalServerError)
+		apiError(w, "Error getting GitHub users", err)
 		return
 	}
 
@@ -447,9 +480,21 @@ func main() {
 		port = "8080"
 	}
 
+	// http.ListenAndServe applies no timeouts at all: a client that opens a
+	// connection and never finishes its request headers holds a goroutine and an
+	// fd until the process dies, which is Slowloris with no tooling required.
+	// These four are the ones net/http leaves at zero.
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           nil, // DefaultServeMux, as registered above
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second, // Cost Explorer is the slow one
+		IdleTimeout:       120 * time.Second,
+	}
+
 	log.Printf("Server listening on :%s...", port)
-	err := http.ListenAndServe(":"+port, nil)
-	if err != nil {
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("FATAL: Server failed to start: %v", err)
 	}
 }
